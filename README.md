@@ -16,12 +16,6 @@ pip install -r requirements.txt
 `data/real/` folder mein genuine human voice recordings daalo (.wav / .mp3).
 `data/fake/` folder mein AI-generated / deepfake voice recordings daalo.
 
-Free datasets kaha se milenge:
-- ASVspoof 2019 / 2021 — https://www.asvspoof.org/
-- Fake-or-Real (FoR) Dataset — Kaggle par search karo
-- WaveFake — https://github.com/RUB-SysSec/WaveFake
-
-Kam se kam 50-100 files har folder mein rakho taaki model theek se train ho.
 
 ## 3. Features Extract Karo
 
