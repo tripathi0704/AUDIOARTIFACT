@@ -82,8 +82,7 @@ async def analyze(file: UploadFile = File(...)):
         return {"error": "Model not loaded. Run train_model.py first."}
 
     # save the upload to a temp file so librosa can read it
-    filename = file.filename or "upload.wav"
-    suffix = os.path.splitext(filename)[1] or ".wav"
+    suffix = os.path.splitext(file.filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
@@ -117,15 +116,30 @@ async def analyze(file: UploadFile = File(...)):
             "confidence": round(float(proba) * 100, 2),
         })
 
+    # ---- lightweight spectrogram payload for the 3D "voice signature" graph ----
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=32)
+    mel_db = librosa.power_to_db(mel_spec, ref=np.max)
+    max_frames = 100
+    if mel_db.shape[1] > max_frames:
+        idx = np.linspace(0, mel_db.shape[1] - 1, max_frames).astype(int)
+        mel_db = mel_db[:, idx]
+    time_axis = np.linspace(0, len(y) / sr, mel_db.shape[1]).tolist()
+    mel_axis = list(range(mel_db.shape[0]))
+
     response = {
-        "filename": filename,
+        "filename": file.filename,
         "total_duration": len(segments) * SEGMENT_DURATION,
         "fake_seconds": fake_seconds,
         "verdict": "Spliced Audio Detected" if fake_seconds > 0 else "No AI Voice Detected",
         "segments": results,
+        "spectrogram": {
+            "z": mel_db.round(2).tolist(),
+            "time": time_axis,
+            "mel": mel_axis,
+        },
     }
 
-    save_result(filename, response)
+    save_result(file.filename, response)
     return response
 
 
