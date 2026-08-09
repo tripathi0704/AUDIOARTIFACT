@@ -1,32 +1,31 @@
 # AudioArtifact — React Frontend
 
-Ye Streamlit dashboard ka replacement hai — bilkul same scanner UI, lekin React + Vite mein.
-Backend (FastAPI) bilkul waisa hi rahega, koi change nahi.
+This React + Vite frontend is a replacement for the Streamlit dashboard. It provides the same scanner UI, while the backend (FastAPI) remains unchanged.
 
-## Pehli Baar Setup (sirf ek baar)
+## First-time setup (one-time)
 
-1. **Node.js install karo** (agar nahi hai) — https://nodejs.org se LTS version download karo
-2. Terminal mein is folder ke andar aao aur dependencies install karo:
+1. Install Node.js (LTS) from https://nodejs.org if you don't have it installed.
+2. From this folder, install dependencies:
 
 ```bash
 cd frontend-react
 npm install
 ```
 
-## Har Baar Chalane Ke Liye
+## Running (every time)
 
-**Terminal 1 — Backend (waisa hi rahega):**
+Terminal 1 — Backend (unchanged):
 ```bash
 uvicorn backend.main:app --reload --port 8000
 ```
 
-**Terminal 2 — React frontend (naya):**
+Terminal 2 — React frontend:
 ```bash
 cd frontend-react
 npm run dev
 ```
 
-Browser mein `http://localhost:5173` khol lo — waha dashboard dikhega.
+Open `http://localhost:5173` in your browser to view the dashboard.
 
 ## Folder Structure
 
@@ -37,26 +36,27 @@ frontend-react/
 ├── vite.config.js
 └── src/
     ├── main.jsx           <- entry point
-    ├── App.jsx             <- main component, backend se connect karta hai
-    ├── index.css            <- poora dark theme yahin hai
+    ├── App.jsx            <- main component that connects to the backend
+    ├── index.css          <- site-wide dark theme
     └── components/
         ├── UploadZone.jsx     <- drag-and-drop uploader + audio player
         ├── ScannerReport.jsx  <- timeline, verdict, gauge, tooltip
         └── SignatureGraph.jsx <- 3D spectrogram graph (Plotly)
 ```
 
-## Kaise Kaam Karta Hai
+## How it works
 
-1. `UploadZone` file uploader dikhata hai — file select hone par `App.jsx` ko batata hai
-2. "Analyze" click karne par `App.jsx` file ko `fetch()` se FastAPI backend ke `/analyze` endpoint par bhejta hai
-3. Backend response (segments, verdict, spectrogram data) wapas aata hai
-4. `ScannerReport` us data se timeline bar, verdict pill, aur confidence gauge banata hai
-5. `SignatureGraph` backend se aayi spectrogram values se 3D graph banata hai (Plotly)
+1. `UploadZone` displays a file uploader — when a file is selected it notifies `App.jsx`.
+2. Clicking the "Analyze" button sends the file to the FastAPI backend `/analyze` endpoint via `fetch()`.
+3. The backend returns response data (segments, verdict, spectrogram values).
+4. `ScannerReport` renders the timeline bar, verdict pill, and confidence gauge from that data.
+5. `SignatureGraph` uses the spectrogram values to render a 3D graph with Plotly.
 
-## Production Build (deploy karne ke liye, optional)
+## Production build (for deployment)
 
 ```bash
 npm run build
 ```
-Isse `dist/` folder banega jo kisi bhi static hosting (Vercel, Netlify) par daal sakte ho.
-Backend URL (`App.jsx` mein `BACKEND_URL`) ko tab apne live backend ke URL se replace karna hoga.
+
+This produces a `dist/` folder that can be deployed to any static hosting service (Vercel, Netlify, etc.).
+Remember to replace the `BACKEND_URL` in `App.jsx` with your live backend URL when deploying.
