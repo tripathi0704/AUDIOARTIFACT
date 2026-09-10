@@ -50,14 +50,17 @@ def main():
 
     print("\nTraining XGBoost Classifier...")
     model = XGBClassifier(
-        n_estimators=300,
+        n_estimators=350,
         max_depth=6,
-        learning_rate=0.08,
+        learning_rate=0.06,
         subsample=0.85,
         colsample_bytree=0.85,
+        reg_alpha=0.1,
+        reg_lambda=1.2,
         eval_metric="logloss",
         scale_pos_weight=scale_pos_weight,
         random_state=42,
+        n_jobs=-1,
     )
     model.fit(X_train, y_train)
 

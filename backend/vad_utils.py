@@ -23,8 +23,7 @@ def get_vad_model():
             warnings.simplefilter("ignore")
             from silero_vad import load_silero_vad
             _vad_model = load_silero_vad()
-    except Exception as e:
-        print(f"Warning: Could not load Silero VAD ({e}). Falling back to energy-based VAD.")
+    except Exception:
         _vad_model = False
     return _vad_model
 

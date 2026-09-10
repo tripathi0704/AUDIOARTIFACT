@@ -112,12 +112,25 @@ def process_file(filepath: str, label: int, max_segments: int = 40):
     return rows
 
 
-def build_dataset(max_files_per_class: int = 150):
+def _worker_task(args):
+    """Worker task wrapper for ProcessPoolExecutor."""
+    filepath, label, max_segments = args
+    return process_file(filepath, label, max_segments)
+
+
+def build_dataset(max_files_per_class: int = 0, num_workers: int = None):
     """
     Extracts features across files in data/real and data/fake
     and outputs features.csv.
+    
+    Parameters:
+        max_files_per_class (int): Max files per class. 0 or None means process ALL files.
+        num_workers (int): Number of parallel CPU workers. Defaults to (CPU count - 2).
     """
-    all_rows = []
+    import time
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    tasks = []
     for folder_name, label in LABELS.items():
         folder_path = os.path.join(DATA_DIR, folder_name)
         files = sorted(
@@ -128,17 +141,42 @@ def build_dataset(max_files_per_class: int = 150):
         if max_files_per_class and max_files_per_class > 0:
             files = files[:max_files_per_class]
 
-        print(f"\nProcessing '{folder_name}' folder -> {len(files)} files to extract")
-        for i, filepath in enumerate(files):
-            rows = process_file(filepath, label)
-            all_rows.extend(rows)
-            if (i + 1) % 25 == 0 or (i + 1) == len(files):
-                print(f"  [{i+1}/{len(files)}] {os.path.basename(filepath)} -> {len(rows)} segments (accumulated: {len(all_rows)})")
+        print(f"Found {len(files)} files in '{folder_name}' folder (label={label})")
+        for f in files:
+            tasks.append((f, label, 40))
 
-    if not all_rows:
+    if not tasks:
         print("\nNo audio files found. Add files inside data/real/ and data/fake/ first.")
         return
 
+    total_tasks = len(tasks)
+    if num_workers is None:
+        cpu_available = os.cpu_count() or 4
+        num_workers = max(1, min(cpu_available - 2, 14))
+
+    print(f"\nExtracting features from {total_tasks} total files using {num_workers} parallel workers...")
+    start_time = time.time()
+    all_rows = []
+    completed = 0
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(_worker_task, task) for task in tasks]
+        for future in as_completed(futures):
+            try:
+                rows = future.result()
+                all_rows.extend(rows)
+            except Exception as e:
+                print(f"Worker error: {e}")
+            
+            completed += 1
+            if completed % 50 == 0 or completed == total_tasks:
+                elapsed = time.time() - start_time
+                pct = (completed / total_tasks) * 100
+                rate = completed / max(elapsed, 0.001)
+                remaining = (total_tasks - completed) / max(rate, 0.001)
+                print(f"  [{completed}/{total_tasks}] ({pct:.1f}%) | Segments: {len(all_rows)} | Speed: {rate:.1f} files/s | ETA: {remaining:.0f}s", end="\r")
+
+    print("\n\nWriting features to CSV...")
     # 60 features: 20 MFCC + 20 Delta + 20 Delta2
     columns = (
         [f"mfcc_{i+1}" for i in range(N_MFCC)] +
@@ -148,19 +186,21 @@ def build_dataset(max_files_per_class: int = 150):
     )
     df = pd.DataFrame(all_rows, columns=columns)
     df.to_csv(OUTPUT_CSV, index=False)
-    print(f"\nDataset build complete: {len(df)} total segments saved to {OUTPUT_CSV} ({len(columns)-1} features per row).")
+    total_time = time.time() - start_time
+    print(f"Dataset build complete in {total_time:.1f} seconds ({total_time/60:.2f} mins)!")
+    print(f"Total segments saved to {OUTPUT_CSV}: {len(df)} ({len(columns)-1} features per row).")
     print("Class distribution:")
     print(df["label"].value_counts().rename({0: "real", 1: "fake"}))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract 60 MFCC+Delta features with VAD and 50% overlap")
-    parser.add_argument("--all", action="store_true", help="Process all files in data/ (may take longer)")
-    parser.add_argument("--limit", type=int, default=150, help="Max files per class (default: 150)")
+    parser.add_argument("--all", action="store_true", help="Process ALL files in data/ without limit (default)")
+    parser.add_argument("--limit", type=int, default=None, help="Custom limit: max files per class (e.g. --limit 500)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of parallel CPU workers")
     args = parser.parse_args()
 
-    max_files: int = args.limit if not args.all else 0
-    if max_files > 0:
-        build_dataset(max_files_per_class=max_files)
-    else:
-        build_dataset()
+    # If user passes --limit, use it; otherwise process all files
+    max_files = args.limit if (args.limit is not None and not args.all) else 0
+    build_dataset(max_files_per_class=max_files, num_workers=args.workers)
+
