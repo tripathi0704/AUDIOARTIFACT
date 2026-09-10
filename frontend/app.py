@@ -1,328 +1,575 @@
 """
-app.py — AudioArtifact Scanner Interface
-Upload audio -> send to backend -> render a dark, instrument-style
-scanner report (verdict pill, confidence gauge, animated timeline,
-3D voice-signature graph).
+app.py — AudioArtifact v2.0 Forensic Dashboard
+------------------------------------------------
+Timeline-Based Deepfake Audio Localizer Interface.
+Features:
+- Drag-and-drop audio uploader (.wav / .mp3)
+- Instant playback & analysis trigger
+- Forensic Verdict Card (Fake ratio %, Highest risk segment, Average confidence)
+- Plotly Continuous Deepfake Probability Curve across time with 50% risk threshold
+- Interactive Forensic Segment Explorer (Click-to-inspect timestamps & risks)
+- 3D Voice Signature Spectrogram (Mel-frequency topography)
+- SQLite Scan History Inspector
 """
 
 import io
 import json
-
-import librosa
+import requests
 import numpy as np
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
+import librosa
 
-BACKEND_URL = "http://127.0.0.1:8000/analyze"
+BACKEND_URL = "http://127.0.0.1:8000"
 
-st.set_page_config(page_title="AudioArtifact", page_icon="◈", layout="wide")
+st.set_page_config(
+    page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",
+    page_icon="◈",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
 # ----------------------------------------------------------------------
-# GLOBAL STYLE — dark instrument theme + hide default Streamlit chrome
+# GLOBAL DARK THEME STYLING
 # ----------------------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root{
-  --bg:#07090A; --panel:#121614; --panel-2:#181D1A; --line:#242B25;
-  --text:#ECEFEB; --muted:#8B958D; --muted-dim:#565F58;
-  --real:#33D17E; --real-dim: rgba(51,209,126,0.13);
-  --fake:#FF5C5C; --fake-dim: rgba(255,92,92,0.13);
-  --amber:#FFB454; --amber-dim: rgba(255,180,84,0.14);
-  --scan:#5EEAD4;
+  --bg: #0A0C0B;
+  --panel: #131614;
+  --panel-2: #1A1E1B;
+  --line: #262B27;
+  --text: #ECEFEB;
+  --muted: #8C958E;
+  --muted-dim: #5E6660;
+  --real: #3ECF8E;
+  --real-dim: rgba(62,207,142,0.12);
+  --fake: #FF5C5C;
+  --fake-dim: rgba(255,92,92,0.14);
+  --amber: #FFB454;
+  --amber-dim: rgba(255,180,84,0.14);
+  --cyan: #5EEAD4;
 }
 
-#MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {visibility:hidden; height:0;}
-.stApp{ background:var(--bg); }
-.block-container{ padding-top:2.4rem; max-width:1080px; }
-html, body, [class*="css"]{ font-family:'Manrope', sans-serif; color:var(--text); }
-
-.brand-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:28px; }
-.brand{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:19px; display:flex; align-items:center; gap:10px; }
-.brand .px{ width:9px; height:9px; background:var(--real); border-radius:50%; box-shadow:0 0 10px var(--real); animation:pulse 2.2s infinite; }
-@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
-.status-tag{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--muted-dim); display:flex; align-items:center; gap:7px; }
-.status-tag i{ width:6px; height:6px; border-radius:50%; background:var(--real); box-shadow:0 0 6px var(--real); }
-
-h1.hero-title{
-  font-family:'Space Grotesk', sans-serif; font-weight:700; letter-spacing:-0.02em;
-  font-size:clamp(28px,4vw,42px); line-height:1.15; margin-bottom:6px;
+#MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {
+  visibility: hidden;
+  height: 0;
 }
-p.hero-sub{ color:var(--muted); font-size:15px; max-width:560px; margin-bottom:30px; }
 
-/* file uploader restyle */
-[data-testid="stFileUploader"]{
-  background:var(--panel); border:1.5px dashed var(--line); border-radius:14px;
-  padding:6px 10px;
+.stApp {
+  background: var(--bg);
 }
-[data-testid="stFileUploader"] section{ background:transparent; border:none; }
-[data-testid="stFileUploaderDropzoneInstructions"] svg{ display:none; }
 
-/* audio player container */
-[data-testid="stAudio"]{ margin-top:14px; }
-
-/* analyze button */
-div.stButton > button{
-  background:var(--text); color:#0A0C0B; border:none; font-weight:700;
-  font-family:'Space Grotesk', sans-serif; font-size:14px; padding:11px 26px;
-  border-radius:22px; transition: transform 0.15s ease;
+.block-container {
+  padding-top: 2rem;
+  padding-bottom: 3rem;
+  max-width: 1120px;
 }
-div.stButton > button:hover{ transform:translateY(-1px); }
 
-.section-label{
-  font-family:'IBM Plex Mono', monospace; font-size:11.5px; letter-spacing:0.16em; text-transform:uppercase;
-  color:var(--scan); margin:36px 0 12px; display:flex; align-items:center; gap:10px;
+html, body, [class*="css"] {
+  font-family: 'Manrope', sans-serif;
+  color: var(--text);
 }
-.section-label::before{ content:''; width:22px; height:1px; background:var(--scan); }
+
+.mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Brand Header */
+.brand-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700;
+  font-size: 17px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 0.02em;
+}
+
+.brand .px {
+  width: 9px;
+  height: 9px;
+  background: var(--real);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--real);
+  animation: pulse 2.2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.status-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 5px 12px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--real);
+  box-shadow: 0 0 6px var(--real);
+}
+
+.hero-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-size: clamp(30px, 4.2vw, 46px);
+  line-height: 1.15;
+  margin-bottom: 8px;
+}
+
+.hero-title span.fake { color: var(--fake); }
+.hero-title span.real { color: var(--real); }
+
+.hero-sub {
+  color: var(--muted);
+  font-size: 15.5px;
+  max-width: 680px;
+  margin-bottom: 28px;
+  line-height: 1.6;
+}
+
+/* File Uploader Restyle */
+[data-testid="stFileUploader"] {
+  background: var(--panel);
+  border: 1.5px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 14px;
+  transition: border-color 0.25s ease;
+}
+
+[data-testid="stFileUploader"]:hover {
+  border-color: var(--real);
+}
+
+[data-testid="stFileUploader"] section {
+  background: transparent;
+  border: none;
+}
+
+/* Buttons */
+div.stButton > button {
+  background: var(--text);
+  color: #0A0C0B;
+  border: none;
+  font-weight: 700;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  padding: 10px 24px;
+  border-radius: 22px;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+div.stButton > button:hover {
+  transform: translateY(-1px);
+  background: #ffffff;
+}
+
+/* Section Labels */
+.section-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin: 32px 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-label::before {
+  content: '';
+  width: 20px;
+  height: 1px;
+  background: var(--amber);
+}
+
+/* Verdict Cards */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.vcard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  transition: border-color 0.2s;
+}
+
+.vcard .k {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.vcard .v {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.vcard .sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.pill-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pill-status.real {
+  background: var(--real-dim);
+  border: 1px solid rgba(62,207,142,0.35);
+  color: var(--real);
+}
+
+.pill-status.fake {
+  background: var(--fake-dim);
+  border: 1px solid rgba(255,92,92,0.35);
+  color: var(--fake);
+}
+
+.pill-status.mixed {
+  background: var(--amber-dim);
+  border: 1px solid rgba(255,180,84,0.35);
+  color: var(--amber);
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# HEADER
+# HEADER & BRAND
 # ----------------------------------------------------------------------
 st.markdown("""
-<div class="brand-row">
-  <div class="brand"><span class="px"></span>AudioArtifact</div>
-  <div class="status-tag"><i></i>SCANNER ONLINE</div>
+<div class="brand-nav">
+  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0</span></div>
+  <div class="status-badge"><i></i>ENGINE: VAD + 50% OVERLAP + 60-MFCC</div>
 </div>
-<h1 class="hero-title">Every voice leaves a signature.</h1>
-<p class="hero-sub">Drop a clip below to scan it segment by segment and see exactly
-where — if anywhere — it turns synthetic.</p>
+<h1 class="hero-title">Audio<span class="real">Artifact</span> — Timeline-Based <span class="fake">Deepfake</span> Audio Localizer</h1>
+<p class="hero-sub">
+  Forensic-grade audio analysis utilizing Silero VAD, 50% overlapping windows (2s window, 1s stride),
+  and 60-feature dynamic derivatives (MFCC + Delta + Delta-Delta) with continuous probability reporting.
+</p>
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# UPLOAD
+# FILE UPLOAD & ACTIONS
 # ----------------------------------------------------------------------
-uploaded_file = st.file_uploader(" ", type=["mp3", "wav"], label_visibility="collapsed")
+col_up, col_ctrl = st.columns([3, 1])
+
+with col_up:
+    uploaded_file = st.file_uploader(
+        "Upload suspicious audio clip",
+        type=["mp3", "wav"],
+        label_visibility="collapsed"
+    )
 
 if uploaded_file is not None:
     st.audio(uploaded_file)
-    analyze_clicked = st.button("Analyze", type="primary")
+    btn_col, _ = st.columns([1, 4])
+    with btn_col:
+        analyze_clicked = st.button("◈ Run Forensic Analysis", type="primary", use_container_width=True)
 else:
     analyze_clicked = False
 
 # ----------------------------------------------------------------------
-# ANALYSIS
+# ANALYSIS EXECUTION
 # ----------------------------------------------------------------------
 if uploaded_file is not None and analyze_clicked:
-    with st.spinner(" "):
+    with st.spinner("Processing audio: Running Silero VAD, 50% overlapping windowing & 60-feature inference..."):
         uploaded_file.seek(0)
         files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
         try:
-            response = requests.post(BACKEND_URL, files=files, timeout=120)
-            response.raise_for_status()
-            result = response.json()
+            res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
+            res.raise_for_status()
+            data = res.json()
         except Exception as e:
-            st.error(f"Could not reach the scanner service: {e}")
+            st.error(f"Could not reach AudioArtifact backend: {e}. Ensure backend is running (`uvicorn backend.main:app --port 8000`).")
             st.stop()
 
-    if "error" in result:
-        st.error(result["error"])
+    if "error" in data:
+        st.error(data["error"])
         st.stop()
 
-    segments = result["segments"]
-    total_duration = result["total_duration"]
-    fake_seconds = result["fake_seconds"]
+    st.session_state["last_result"] = data
+    st.session_state["analyzed_file_name"] = uploaded_file.name
 
-    if fake_seconds == 0:
-        verdict_class, verdict_label = "is-real", "Human-verified"
-    elif fake_seconds >= total_duration:
-        verdict_class, verdict_label = "is-fake", "Fully synthetic"
-    else:
-        verdict_class, verdict_label = "is-mixed", "Mixed signal detected"
-
+# ----------------------------------------------------------------------
+# RENDER FORENSIC REPORT
+# ----------------------------------------------------------------------
+if "last_result" in st.session_state:
+    data = st.session_state["last_result"]
+    segments = data["segments"]
+    total_dur = data.get("total_duration", 0.0)
+    fake_ratio = data.get("fake_ratio", 0.0)
+    verdict = data.get("verdict", "")
+    highest = data.get("highest_risk_segment", {})
     avg_conf = round(sum(s["confidence"] for s in segments) / max(len(segments), 1), 1)
 
-    # ------------------------------------------------------------
-    # SCANNER COMPONENT (self-contained HTML/CSS/JS, real data)
-    # ------------------------------------------------------------
-    segments_json = json.dumps([
-        {"start": s["start"], "end": s["end"],
-         "verdict": "real" if s["label_code"] == 0 else "fake",
-         "confidence": s["confidence"]}
+    # Verdict Pill Style
+    if fake_ratio == 0:
+        pill_class = "real"
+        pill_text = f"✓ {verdict}"
+    elif fake_ratio >= 80:
+        pill_class = "fake"
+        pill_text = f"⚠ {verdict}"
+    else:
+        pill_class = "mixed"
+        pill_text = f"⚡ {verdict}"
+
+    st.markdown('<div class="section-label">Forensic Summary</div>', unsafe_allow_html=True)
+
+    # Top Status & Metrics Grid
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"""
+        <div class="vcard">
+          <div class="k">Overall Verdict</div>
+          <div style="margin-top:6px;"><span class="pill-status {pill_class}">{pill_text}</span></div>
+          <div class="sub">File: {data.get("filename", "")}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="vcard">
+          <div class="k">Synthetic Audio Ratio</div>
+          <div class="v" style="color:{'#FF5C5C' if fake_ratio > 40 else '#3ECF8E'}">{fake_ratio}%</div>
+          <div class="sub">{data.get("fake_seconds", 0)}s of {total_dur}s flagged</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        peak_prob = round(highest.get("fake_probability", 0.0) * 100, 1)
+        st.markdown(f"""
+        <div class="vcard">
+          <div class="k">Peak Risk Segment</div>
+          <div class="v" style="color:{'#FF5C5C' if peak_prob >= 50 else '#3ECF8E'}">{peak_prob}% AI</div>
+          <div class="sub">Timestamp: {highest.get('start', 0)}s – {highest.get('end', 0)}s</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="vcard">
+          <div class="k">Model Confidence</div>
+          <div class="v" style="color:var(--cyan);">{avg_conf}%</div>
+          <div class="sub">{len(segments)} overlapping windows</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ------------------------------------------------------------------
+    # CONTINUOUS PROBABILITY TIMELINE (PLOTLY)
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-label">Continuous Deepfake Probability Curve (Timeline)</div>', unsafe_allow_html=True)
+
+    time_points = [round((s["start"] + s["end"]) / 2, 2) for s in segments]
+    fake_probs = [round(s["fake_probability"] * 100, 2) for s in segments]
+    confidences = [s["confidence"] for s in segments]
+    hover_texts = [
+        f"<b>Window {s['segment']+1}</b><br>"
+        f"Interval: {s['start']}s – {s['end']}s<br>"
+        f"AI Probability: {s['fake_probability']*100:.1f}%<br>"
+        f"Classification: <b>{s['label']}</b> (Confidence: {s['confidence']}%)"
         for s in segments
-    ])
+    ]
 
-    scanner_html = """
-    <div id="root"></div>
-    <style>
-      body{ margin:0; font-family:'Manrope', sans-serif; background:transparent; }
-      .mono{ font-family:'IBM Plex Mono', monospace; }
-      .shell{ background:linear-gradient(180deg, #121614, #0B0E0C); border:1px solid #242B25; border-radius:18px; overflow:hidden; color:#ECEFEB; }
-      .topbar{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:16px 20px; border-bottom:1px solid #242B25; }
-      .fname{ font-size:13.5px; font-weight:600; }
-      .fsub{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:#565F58; margin-top:2px; }
-      .pill{ font-family:'IBM Plex Mono', monospace; font-size:11.5px; font-weight:600; padding:7px 14px; border-radius:20px; display:flex; align-items:center; gap:8px; }
-      .pill i{ width:7px; height:7px; border-radius:50%; }
-      .pill.is-real{ background:rgba(51,209,126,0.13); border:1px solid rgba(51,209,126,0.35); color:#33D17E; }
-      .pill.is-real i{ background:#33D17E; box-shadow:0 0 8px #33D17E; }
-      .pill.is-fake{ background:rgba(255,92,92,0.13); border:1px solid rgba(255,92,92,0.35); color:#FF5C5C; }
-      .pill.is-fake i{ background:#FF5C5C; box-shadow:0 0 8px #FF5C5C; }
-      .pill.is-mixed{ background:rgba(255,180,84,0.14); border:1px solid rgba(255,180,84,0.35); color:#FFB454; }
-      .pill.is-mixed i{ background:#FFB454; box-shadow:0 0 8px #FFB454; }
-      .body{ padding:24px 20px 6px; }
-      .canvas{ position:relative; height:150px; display:flex; align-items:center; overflow:hidden; border-radius:12px;
-        background:repeating-linear-gradient(180deg, transparent, transparent 38px, rgba(236,239,235,0.06) 39px); }
-      .baseline{ position:absolute; left:0; right:0; top:50%; height:1px; background:#242B25; }
-      .track{ position:relative; z-index:2; display:flex; align-items:center; gap:2px; width:100%; height:100%; padding:0 2px; }
-      .bar{ flex:1; min-width:2px; border-radius:2px; background:#565F58; opacity:0.35; transform-origin:center; transition:background 0.35s ease, opacity 0.35s ease, transform 0.5s ease; }
-      .scanline{ position:absolute; top:0; bottom:0; width:2px; left:0%; background:#5EEAD4; box-shadow:0 0 18px 3px #5EEAD4; z-index:3; opacity:0; transition:left 1.6s cubic-bezier(.3,.6,.2,1); }
-      .scanline.on{ opacity:1; }
-      .ruler{ display:flex; justify-content:space-between; margin-top:9px; font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:#565F58; }
-      .bottom{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; justify-content:space-between; padding:18px 20px; border-top:1px solid #242B25; }
-      .legend{ display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; color:#8B958D; }
-      .legend span{ display:inline-flex; align-items:center; gap:7px; }
-      .legend i{ width:8px;height:8px;border-radius:50%; display:inline-block; }
-      .gauge-wrap{ display:flex; align-items:center; gap:12px; }
-      .gauge-wrap svg{ width:52px; height:52px; transform:rotate(-90deg); }
-      .gauge-bg{ fill:none; stroke:#242B25; stroke-width:6; }
-      .gauge-fg{ fill:none; stroke:#33D17E; stroke-width:6; stroke-linecap:round; stroke-dasharray:251.2; stroke-dashoffset:251.2; transition:stroke-dashoffset 1.1s cubic-bezier(.3,.6,.2,1); }
-      .gauge-num{ font-size:17px; font-weight:700; font-family:'Space Grotesk', sans-serif; }
-      .gauge-cap{ font-family:'IBM Plex Mono', monospace; font-size:10px; color:#565F58; text-transform:uppercase; }
-      .tooltip{ position:absolute; z-index:10; transform:translate(-50%,-108%); background:#080A09; border:1px solid #242B25; border-radius:8px; padding:8px 11px; font-family:'IBM Plex Mono', monospace; font-size:11px; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity 0.15s ease; }
-      .tooltip.show{ opacity:1; }
-    </style>
+    fig = go.Figure()
 
-    <div class="shell">
-      <div class="topbar">
-        <div><div class="fname">__FILENAME__</div><div class="fsub mono">__DURATION__s scanned</div></div>
-        <div class="pill __VERDICT_CLASS__"><i></i><span>__VERDICT_LABEL__</span></div>
-      </div>
-      <div class="body">
-        <div class="canvas" id="canvas">
-          <div class="baseline"></div>
-          <div class="track" id="track"></div>
-          <div class="scanline" id="scanline"></div>
-          <div class="tooltip" id="tooltip"></div>
-        </div>
-        <div class="ruler" id="ruler"></div>
-      </div>
-      <div class="bottom">
-        <div class="legend">
-          <span><i style="background:#33D17E"></i>Human-verified</span>
-          <span><i style="background:#FF5C5C"></i>AI-synthesized</span>
-        </div>
-        <div class="gauge-wrap">
-          <svg viewBox="0 0 90 90"><circle class="gauge-bg" cx="45" cy="45" r="40"/><circle class="gauge-fg" id="gaugeFg" cx="45" cy="45" r="40"/></svg>
-          <div><div class="gauge-num" id="gaugeNum">0%</div><div class="gauge-cap">confidence</div></div>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      const segments = __SEGMENTS_JSON__;
-      const track = document.getElementById('track');
-      const ruler = document.getElementById('ruler');
-      const tooltip = document.getElementById('tooltip');
-      const scanline = document.getElementById('scanline');
-      const CIRC = 251.2;
-
-      segments.forEach((seg, idx) => {
-        const bar = document.createElement('div');
-        bar.className = 'bar';
-        bar.dataset.idx = idx;
-        bar.style.height = (28 + (seg.confidence % 40)) + 'px';
-        track.appendChild(bar);
-      });
-
-      const totalDur = segments.length ? segments[segments.length-1].end : 0;
-      const steps = 6;
-      for(let i=0;i<=steps;i++){
-        const s = document.createElement('span');
-        const t = (totalDur/steps)*i;
-        const m = Math.floor(t/60), sec = Math.floor(t%60);
-        s.textContent = m + ':' + String(sec).padStart(2,'0');
-        ruler.appendChild(s);
-      }
-
-      track.addEventListener('mousemove', e => {
-        const bar = e.target.closest('.bar');
-        if(!bar){ tooltip.classList.remove('show'); return; }
-        const seg = segments[bar.dataset.idx];
-        const rect = track.getBoundingClientRect();
-        tooltip.style.left = (e.clientX - rect.left) + 'px';
-        tooltip.style.top = '0px';
-        tooltip.innerHTML = (seg.verdict==='real' ? 'Human-verified' : 'AI-synthesized') +
-          '<div style="color:#8B958D;margin-top:2px;">' + seg.start.toFixed(1) + 's\u2013' + seg.end.toFixed(1) + 's \u00b7 ' + seg.confidence + '%</div>';
-        tooltip.classList.add('show');
-      });
-      track.addEventListener('mouseleave', () => tooltip.classList.remove('show'));
-
-      window.addEventListener('load', () => {
-        setTimeout(() => {
-          scanline.classList.add('on');
-          scanline.style.left = '100%';
-          const bars = Array.from(track.children);
-          bars.forEach((bar, idx) => {
-            const delay = (idx/bars.length) * 1500;
-            setTimeout(() => {
-              const seg = segments[idx];
-              bar.style.background = seg.verdict === 'real' ? '#33D17E' : '#FF5C5C';
-              bar.style.opacity = '0.92';
-            }, delay);
-          });
-          setTimeout(() => {
-            scanline.classList.remove('on');
-            const gaugeFg = document.getElementById('gaugeFg');
-            const gaugeNum = document.getElementById('gaugeNum');
-            const val = __AVG_CONF__;
-            const offset = CIRC * (1 - val/100);
-            gaugeFg.style.strokeDashoffset = offset;
-            gaugeFg.style.stroke = val >= 70 ? '#33D17E' : '#FFB454';
-            gaugeNum.textContent = val + '%';
-          }, 1600);
-        }, 250);
-      });
-    </script>
-    """
-
-    scanner_html = (scanner_html
-        .replace("__FILENAME__", result["filename"])
-        .replace("__DURATION__", str(round(total_duration)))
-        .replace("__VERDICT_CLASS__", verdict_class)
-        .replace("__VERDICT_LABEL__", verdict_label)
-        .replace("__SEGMENTS_JSON__", segments_json)
-        .replace("__AVG_CONF__", str(avg_conf))
+    # 50% Threshold Area
+    fig.add_shape(
+        type="rect",
+        x0=0, x1=total_dur,
+        y0=50, y1=100,
+        fillcolor="rgba(255, 92, 92, 0.05)",
+        line=dict(width=0),
+        layer="below"
     )
 
-    components.html(scanner_html, height=380, scrolling=False)
+    # 50% Threshold Line
+    fig.add_trace(go.Scatter(
+        x=[0, total_dur],
+        y=[50, 50],
+        mode="lines",
+        line=dict(color="rgba(255, 180, 84, 0.7)", width=1.5, dash="dash"),
+        name="AI Decision Boundary (50%)",
+        hoverinfo="skip"
+    ))
 
-    # ------------------------------------------------------------
-    # 3D VOICE SIGNATURE GRAPH
-    # ------------------------------------------------------------
-    st.markdown('<div class="section-label">Voice Signature</div>', unsafe_allow_html=True)
-
-    uploaded_file.seek(0)
-    y, sr = librosa.load(io.BytesIO(uploaded_file.read()), sr=16000, mono=True)
-    S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=40)
-    S_db = librosa.power_to_db(S, ref=np.max)
-
-    # downsample time axis for a smooth, light-weight 3D render
-    max_frames = 120
-    if S_db.shape[1] > max_frames:
-        idx = np.linspace(0, S_db.shape[1] - 1, max_frames).astype(int)
-        S_db = S_db[:, idx]
-
-    time_axis = np.linspace(0, total_duration, S_db.shape[1])
-    mel_axis = np.arange(S_db.shape[0])
-
-    fig = go.Figure(data=[go.Surface(
-        z=S_db, x=time_axis, y=mel_axis,
-        colorscale=[[0, "#07090A"], [0.4, "#123024"], [0.7, "#1e6b4c"], [1, "#33D17E"]],
-        showscale=False,
-    )])
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="", showbackground=False, color="#565F58"),
-            yaxis=dict(title="", showbackground=False, color="#565F58"),
-            zaxis=dict(title="", showbackground=False, color="#565F58"),
-            bgcolor="rgba(0,0,0,0)",
+    # Continuous Probability Line
+    fig.add_trace(go.Scatter(
+        x=time_points,
+        y=fake_probs,
+        mode="lines+markers",
+        name="Deepfake Probability",
+        line=dict(color="#3ECF8E", width=3, shape="spline"),
+        marker=dict(
+            size=7,
+            color=["#FF5C5C" if p >= 50 else "#3ECF8E" for p in fake_probs],
+            line=dict(color="#0A0C0B", width=1.5)
         ),
+        hovertext=hover_texts,
+        hoverinfo="text"
+    ))
+
+    fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=10, b=0),
-        height=420,
+        plot_bgcolor="#131614",
+        height=320,
+        margin=dict(l=40, r=20, t=20, b=40),
+        xaxis=dict(
+            title=dict(text="Timeline (Seconds)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
+            tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
+            gridcolor="#262B27",
+            zeroline=False,
+            range=[0, total_dur]
+        ),
+        yaxis=dict(
+            title=dict(text="AI Voice Probability (%)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
+            tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
+            gridcolor="#262B27",
+            range=[-2, 105],
+            zeroline=False
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(family="IBM Plex Mono", size=11, color="#8C958E")
+        ),
+        hovermode="closest"
     )
+
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # ------------------------------------------------------------------
+    # SEGMENT-BY-SEGMENT FORENSIC EXPLORER
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-label">Overlapping Window Breakdown</div>', unsafe_allow_html=True)
+
+    with st.expander(f"Inspect all {len(segments)} windows (2.0s window / 1.0s stride)", expanded=False):
+        seg_cols = st.columns(4)
+        for idx, s in enumerate(segments):
+            with seg_cols[idx % 4]:
+                is_fake = s["label_code"] == 1
+                color = "#FF5C5C" if is_fake else "#3ECF8E"
+                st.markdown(f"""
+                <div style="background:#1A1E1B;border:1px solid #262B27;border-left:3px solid {color};padding:10px 12px;border-radius:8px;margin-bottom:10px;">
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8C958E;">
+                    WINDOW {s['segment']+1} · {s['start']}s–{s['end']}s
+                  </div>
+                  <div style="font-weight:700;font-size:14px;color:{color};margin-top:2px;">
+                    {s['label']} ({s['fake_probability']*100:.1f}%)
+                  </div>
+                  <div style="font-size:11px;color:#5E6660;">Confidence: {s['confidence']}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ------------------------------------------------------------------
+    # 3D VOICE SIGNATURE SPECTROGRAM
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-label">Voice Signature Spectrogram</div>', unsafe_allow_html=True)
+
+    spec_data = data.get("spectrogram", {})
+    if "z" in spec_data and spec_data["z"]:
+        z = np.array(spec_data["z"])
+        x = np.array(spec_data.get("time", list(range(z.shape[1]))))
+        y = np.array(spec_data.get("mel", list(range(z.shape[0]))))
+
+        fig3d = go.Figure(data=[go.Surface(
+            z=z, x=x, y=y,
+            colorscale=[
+                [0, "#0A0C0B"],
+                [0.35, "#132E22"],
+                [0.7, "#1F6B4C"],
+                [1.0, "#3ECF8E"]
+            ],
+            showscale=False
+        )])
+        fig3d.update_layout(
+            scene=dict(
+                xaxis=dict(title="", showbackground=False, color="#5E6660"),
+                yaxis=dict(title="", showbackground=False, color="#5E6660"),
+                zaxis=dict(title="", showbackground=False, color="#5E6660"),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=0, r=0, t=10, b=0),
+            height=380,
+        )
+        st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
+
+# ----------------------------------------------------------------------
+# SCAN HISTORY (SQLITE)
+# ----------------------------------------------------------------------
+st.markdown('<div class="section-label">Database Scan History</div>', unsafe_allow_html=True)
+try:
+    hist_res = requests.get(f"{BACKEND_URL}/history?limit=10", timeout=5)
+    if hist_res.status_code == 200:
+        history_records = hist_res.json()
+        if history_records:
+            with st.expander(f"Recent Database Records ({len(history_records)} scans)", expanded=False):
+                for h in history_records:
+                    v = h.get("verdict", "")
+                    col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
+                    st.markdown(f"""
+                    <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+                      <div>
+                        <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
+                        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
+                          Duration: {h.get('duration_sec', 0):.1f}s · Created: {h.get('created_at', '')[:19].replace('T', ' ')}
+                        </div>
+                      </div>
+                      <div style="text-align:right;">
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;">
+                          {v or 'Scanned'}
+                        </span>
+                        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
+                          Fake Ratio: {h.get('fake_ratio', 0):.1f}%
+                        </div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.caption("No scan records in history database yet.")
+except Exception:
+    st.caption("Backend offline or history currently unavailable.")

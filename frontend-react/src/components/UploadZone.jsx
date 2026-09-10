@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-export default function UploadZone({ file, onFileSelected, onClear }) {
+export default function UploadZone({ file, onFileSelected, onClear, onAudioReady }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -23,7 +23,7 @@ export default function UploadZone({ file, onFileSelected, onClear }) {
           </div>
           <button className="clear" onClick={onClear}>Remove</button>
         </div>
-        <audio controls src={audioUrl} />
+        <audio controls src={audioUrl} ref={(el) => onAudioReady && onAudioReady(el)} />
       </div>
     );
   }

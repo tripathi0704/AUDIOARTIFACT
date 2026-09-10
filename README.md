@@ -1,8 +1,18 @@
-# AudioArtifact — Setup & Run Guide
+# AudioArtifact v2.0 — Engineering Guide
 
-This guide explains the complete step-by-step process to run the project from scratch.
+AudioArtifact is an advanced timeline-based deepfake audio localizer. It detects and pinpoints synthetic speech segments in audio recordings using Voice Activity Detection (VAD), 50% overlapping sliding windows, dynamic MFCC derivatives (MFCC + Delta + Delta²), XGBoost continuous probability modeling, and interactive Plotly visualization.
 
-Run every command from the project root folder (the folder where this README is located).
+---
+
+## What's New in v2.0
+
+- **Voice Activity Detection (Silero VAD)**: Automatically removes silence and ambient pauses to focus forensics strictly on active voice signals.
+- **50% Overlapping Slicing**: Slices audio into 2-second windows with a 1-second stride, preventing spliced splice-point artifacts from falling between non-overlapping boundaries.
+- **60-Feature Extraction**: Combines 20 MFCCs, 20 Delta coefficients (velocity), and 20 Delta-Delta coefficients (acceleration) to capture temporal frequency shifts characteristic of neural TTS/voice cloning.
+- **Continuous Probability Modeling**: XGBoost calibrated with `predict_proba` to deliver second-by-second synthetic risk probabilities (0.0 to 1.0) evaluated with ROC-AUC.
+- **Interactive Visual Reporting**: Streamlit frontend featuring an interactive Plotly continuous probability curve, verdict card, segment breakdown inspector, 3D voice signature spectrogram, and SQLite scan history.
+
+---
 
 ## 1. Environment Setup
 
@@ -12,19 +22,36 @@ source venv/bin/activate        # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 2. Add the Dataset
+---
 
-Place genuine human voice recordings (`.wav` / `.mp3`) in the `data/real/` folder.
+## 2. Dataset Organization
 
-Place AI-generated / deepfake voice recordings in the `data/fake/` folder.
+Ensure datasets are organized under `data/`:
 
-## 3. Extract Features
-
-```bash
-python feature_extraction.py
+```text
+data/
+├── real/    <- Genuine human voice recordings (.wav / .mp3)
+└── fake/    <- AI-synthesized voice recordings (.wav / .mp3)
 ```
 
-This will generate `features.csv` in the project root folder.
+---
+
+## 3. Feature Extraction (VAD + 50% Overlap + 60-MFCC)
+
+```bash
+# Extract features from a balanced set (default: 150 files per class)
+python feature_extraction.py
+
+# Or customize limit:
+python feature_extraction.py --limit 100
+
+# Or extract all files:
+python feature_extraction.py --all
+```
+
+This generates `features.csv` with 60 feature columns (`mfcc_1..20`, `delta_1..20`, `delta2_1..20`) and `label`.
+
+---
 
 ## 4. Train the Model
 
@@ -32,52 +59,54 @@ This will generate `features.csv` in the project root folder.
 python train_model.py
 ```
 
-This will generate `model/deepfake_detector.pkl`, and the accuracy report will be displayed in the console.
+This trains the XGBoost classifier, outputs Accuracy, Precision, Recall, F1-score, Confusion Matrix, and **ROC-AUC score**, then saves the model to `model/deepfake_detector.pkl`.
 
-## 5. Start the Backend
+---
 
+## 5. Launch the Application
+
+You can launch both the backend and frontend at once using:
+
+```bash
+start.bat
+```
+
+Or start them individually in separate terminals:
+
+**Terminal 1 (Backend - FastAPI):**
 ```bash
 uvicorn backend.main:app --reload --port 8000
 ```
 
-Check the backend by opening `http://127.0.0.1:8000` in your browser.
-
-You should see:
-
-```json
-{"status": "AudioArtifact backend running"}
-```
-
-## 6. Start the Frontend (in a new terminal)
-
+**Terminal 2 (Frontend - Streamlit):**
 ```bash
 streamlit run frontend/app.py
 ```
 
-The browser will open automatically. Upload an audio file there and click **"Analyze"**.
+- **Backend API**: `http://127.0.0.1:8000` (Interactive docs at `/docs`)
+- **Frontend Dashboard**: `http://localhost:8501`
 
-## Folder Structure
+---
+
+## Project Structure
 
 ```text
 AudioArtifact/
-├── data/
-│   ├── real/                    <- Put human voice files here
-│   └── fake/                    <- Put AI/fake voice files here
-├── model/
-│   └── deepfake_detector.pkl    <- Generated after running train_model.py
 ├── backend/
-│   ├── main.py                  <- FastAPI server
-│   └── db.py                    <- SQLite history
+│   ├── main.py                  <- FastAPI async backend service (/analyze, /history)
+│   ├── vad_utils.py             <- Silero VAD + energy-based silence filtering
+│   └── db.py                    <- SQLite persistence & scan history
 ├── frontend/
-│   └── app.py                   <- Streamlit dashboard
-├── feature_extraction.py
-├── train_model.py
-├── requirements.txt
-└── README.md
+│   └── app.py                   <- Streamlit dashboard with Plotly probability curve
+├── data/
+│   ├── real/                    <- Human audio dataset
+│   └── fake/                    <- Deepfake audio dataset
+├── model/
+│   └── deepfake_detector.pkl    <- Trained XGBoost classifier
+├── feature_extraction.py        <- 60-feature extractor with VAD and 50% overlap
+├── train_model.py               <- XGBoost training with ROC-AUC evaluation
+├── requirements.txt             <- Project dependencies
+├── history.db                   <- SQLite forensic scan history
+├── start.bat                    <- Dual-server launcher
+└── README.md                    <- Documentation
 ```
-
-## Common Issues
-
-- **"No module named librosa"** → The virtual environment is not activated, or `pip install -r requirements.txt` has not been run.
-- **"Model not loaded"** error from the backend → Run `train_model.py` first.
-- **Unable to connect to the backend** → Make sure the backend is running in the terminal and port `8000` is available.

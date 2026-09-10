@@ -1,7 +1,7 @@
 :root{
-  --bg:#07090A; --panel:#121614; --panel-2:#181D1A; --line:#242B25;
-  --text:#ECEFEB; --muted:#8B958D; --muted-dim:#565F58;
-  --real:#33D17E; --fake:#FF5C5C; --amber:#FFB454; --scan:#5EEAD4;
+  --bg:#0A0C0B; --panel:#131614; --panel-2:#1A1E1B; --line:#262B27;
+  --text:#ECEFEB; --muted:#8C958E; --muted-dim:#5E6660;
+  --real:#3ECF8E; --fake:#FF5C5C; --amber:#FFB454; --scan:#5EEAD4;
 }
 
 *{ box-sizing:border-box; }
@@ -9,7 +9,20 @@ html, body, #root{ height:100%; }
 body{
   margin:0; background:var(--bg); color:var(--text);
   font-family:'Manrope', sans-serif;
+  position:relative;
 }
+
+/* subtle vertical-line texture + top glow, same treatment as the roadmap page */
+.noise-bg{
+  position:fixed; inset:0; z-index:0; pointer-events:none; opacity:0.045;
+  background-image: repeating-linear-gradient(90deg, var(--text) 0px, var(--text) 1px, transparent 1px, transparent 24px);
+}
+.glow{
+  position:fixed; top:-200px; left:50%; transform:translateX(-50%);
+  width:900px; height:600px; z-index:0; pointer-events:none;
+  background: radial-gradient(ellipse at center, rgba(62,207,142,0.08), transparent 70%);
+}
+
 .mono{ font-family:'IBM Plex Mono', monospace; }
 
 .app-shell{ max-width:1080px; margin:0 auto; padding:48px 24px 100px; }
@@ -51,6 +64,13 @@ p.hero-sub{ color:var(--muted); font-size:15px; max-width:560px; margin:0 0 30px
 .file-row button.clear:hover{ border-color:var(--fake); color:var(--fake); }
 
 audio{ width:100%; margin-top:14px; border-radius:10px; }
+
+.live-visualizer{
+  margin-top:16px;
+  background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:14px 16px; height:120px;
+}
+.live-visualizer canvas{ width:100%; height:100%; display:block; }
 
 /* ---------- analyze button ---------- */
 .analyze-btn{
@@ -96,9 +116,16 @@ audio{ width:100%; margin-top:14px; border-radius:10px; }
 }
 .baseline{ position:absolute; left:0; right:0; top:50%; height:1px; background:var(--line); }
 .track{ position:relative; z-index:2; display:flex; align-items:center; gap:2px; width:100%; height:100%; padding:0 2px; }
-.bar{ flex:1; min-width:2px; border-radius:2px; background:var(--muted-dim); opacity:0.35; transition:background 0.35s ease, opacity 0.35s ease; }
+.bar{ flex:1; min-width:2px; border-radius:2px; background:var(--muted-dim); opacity:0.35; transition:background 0.35s ease, opacity 0.35s ease; transform-origin:center; will-change:transform; }
 .bar.revealed.real{ background:var(--real); opacity:0.92; }
 .bar.revealed.fake{ background:var(--fake); opacity:0.92; }
+
+.playhead{
+  position:absolute; top:0; bottom:0; width:2px; z-index:4;
+  background:var(--text); box-shadow:0 0 10px 2px rgba(236,239,235,0.5);
+  transition:opacity 0.2s ease;
+  pointer-events:none;
+}
 
 .scanline{ position:absolute; top:0; bottom:0; width:2px; background:var(--scan); box-shadow:0 0 18px 3px var(--scan); z-index:3; opacity:0; transition:left 1.6s cubic-bezier(.3,.6,.2,1), opacity 0.2s ease; }
 .scanline.on{ opacity:1; }
