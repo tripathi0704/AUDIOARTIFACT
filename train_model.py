@@ -39,11 +39,12 @@ def main():
     )
 
     print(f"Training on {len(X_train)} segments, testing on {len(X_test)} segments")
-    print(f"Class balance in training set:\n{y_train.value_counts().rename({0: 'real', 1: 'fake'})}")
+    y_train_series = pd.Series(y_train)
+    print(f"Class balance in training set:\n{y_train_series.value_counts().rename({0: 'real', 1: 'fake'})}")
 
     # Handle class imbalance if any
-    num_fake = int((y_train == 1).sum())
-    num_real = int((y_train == 0).sum())
+    num_fake = int((y_train_series == 1).sum())
+    num_real = int((y_train_series == 0).sum())
     scale_pos_weight = (num_real / max(num_fake, 1))
     print(f"Calculated scale_pos_weight: {scale_pos_weight:.3f}")
 

@@ -91,20 +91,22 @@ def process_file(filepath: str, label: int, max_segments: int = 40):
         print(f"  [skip] could not read {filepath}: {e}")
         return rows
 
+    sr_int: int = int(sr)
+
     # 1. Voice Activity Detection (remove silence chunks)
-    y_speech, _ = filter_speech_vad(y, sr)
+    y_speech, _ = filter_speech_vad(y, sr_int)
     if len(y_speech) < int(SAMPLE_RATE * 1.0):
         y_speech = y
 
     # 2. Overlapping slicing (2s window, 1s stride)
-    segments = slice_overlapping(y_speech, sr, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+    segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
 
     if max_segments and len(segments) > max_segments:
         segments = segments[:max_segments]
 
     # 3. 60-feature extraction per segment
     for _, _, seg in segments:
-        features = extract_advanced_features(seg, sr)
+        features = extract_advanced_features(seg, sr_int)
         rows.append(list(features) + [label])
 
     return rows
@@ -157,5 +159,8 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=150, help="Max files per class (default: 150)")
     args = parser.parse_args()
 
-    max_files = None if args.all else args.limit
-    build_dataset(max_files_per_class=max_files)
+    max_files: int = args.limit if not args.all else 0
+    if max_files > 0:
+        build_dataset(max_files_per_class=max_files)
+    else:
+        build_dataset()

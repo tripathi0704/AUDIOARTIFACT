@@ -1,0 +1,8 @@
+# Pyrefly configuration for AudioArtifact
+# Points to venv so torch, silero_vad, etc. are found correctly
+
+python-interpreter-path = "venv/Scripts/python.exe"
+
+search-path = [".", "backend"]
+
+project-excludes = ["**/venv/**", "**/__pyrefly_virtual__/**"]

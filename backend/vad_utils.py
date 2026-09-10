@@ -49,7 +49,7 @@ def filter_speech_vad(y: np.ndarray, sr: int = 16000, threshold: float = 0.5):
             if speech_ts:
                 chunks = [y[ts['start']:ts['end']] for ts in speech_ts]
                 y_speech = np.concatenate(chunks)
-                timestamps = [{'start': round(ts['start'] / sr, 3), 'end': round(ts['end'] / sr, 3)} for ts in speech_ts]
+                timestamps = [{'start': round(float(ts['start']) / sr, 3), 'end': round(float(ts['end']) / sr, 3)} for ts in speech_ts]
                 return y_speech, timestamps
         except Exception as e:
             # Fallback on any runtime failure
@@ -61,7 +61,7 @@ def filter_speech_vad(y: np.ndarray, sr: int = 16000, threshold: float = 0.5):
         if len(intervals) > 0:
             chunks = [y[start:end] for start, end in intervals]
             y_speech = np.concatenate(chunks)
-            timestamps = [{'start': round(start / sr, 3), 'end': round(end / sr, 3)} for start, end in intervals]
+            timestamps = [{'start': round(float(start) / sr, 3), 'end': round(float(end) / sr, 3)} for start, end in intervals]
             return y_speech, timestamps
     except Exception:
         pass

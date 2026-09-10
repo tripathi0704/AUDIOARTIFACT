@@ -9,7 +9,7 @@ Includes auto-migration for legacy schema compatibility.
 import os
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "history.db")
 
@@ -58,7 +58,7 @@ def save_result(filename: str, result: dict):
     fake_ratio = float(result.get("fake_ratio", 0.0))
     verdict = str(result.get("verdict", ""))
     result_str = json.dumps(result)
-    created_at = datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     cursor.execute(
         """

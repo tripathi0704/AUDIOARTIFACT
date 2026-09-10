@@ -18,10 +18,11 @@ Flow on every /analyze request:
 import os
 import sys
 import tempfile
+from contextlib import asynccontextmanager
 import joblib
 import librosa
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 # allow importing local modules
@@ -38,20 +39,11 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "deepfake_de
 LABEL_NAMES = {0: "Human", 1: "AI Fake"}
 # -----------------------------------------
 
-app = FastAPI(title="AudioArtifact API v2.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 model = None
 
 
-@app.on_event("startup")
-def load_resources():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global model
     init_db()
     if os.path.exists(MODEL_PATH):
@@ -62,6 +54,17 @@ def load_resources():
             print(f"[Backend] Error loading model: {e}")
     else:
         print(f"[Backend] WARNING: No model found at {MODEL_PATH}. Train one with train_model.py")
+    yield
+
+
+app = FastAPI(title="AudioArtifact API v2.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def extract_features(segment: np.ndarray, sr: int = SAMPLE_RATE, n_mfcc: int = N_MFCC) -> np.ndarray:
@@ -104,12 +107,13 @@ def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = 
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...), bg_tasks: BackgroundTasks = None):
+async def analyze(file: UploadFile = File(...)):
     if model is None:
         return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
 
     # Save upload to a temporary file for librosa to process
-    suffix = os.path.splitext(file.filename)[1] or ".wav"
+    original_filename: str = file.filename or "upload"
+    suffix = os.path.splitext(original_filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         content = await file.read()
         tmp.write(content)
@@ -125,14 +129,16 @@ async def analyze(file: UploadFile = File(...), bg_tasks: BackgroundTasks = None
 
     raw_duration = round(len(y) / sr, 2)
 
+    sr_int: int = int(sr)
+
     # 1. Voice Activity Detection (silence removal)
-    y_speech, speech_intervals = filter_speech_vad(y, sr)
+    y_speech, speech_intervals = filter_speech_vad(y, sr_int)
     if len(y_speech) < int(SAMPLE_RATE * 1.0):
         # If VAD was too restrictive, fall back to raw waveform
         y_speech = y
 
     # 2. Overlapping sliding window (2s window, 1s stride)
-    segments = slice_overlapping(y_speech, sr, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+    segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
 
     if not segments:
         return {
@@ -145,7 +151,7 @@ async def analyze(file: UploadFile = File(...), bg_tasks: BackgroundTasks = None
 
     # 3. Predict continuous probabilities for each segment
     for i, (start_t, end_t, seg) in enumerate(segments):
-        feat = extract_features(seg, sr).reshape(1, -1)
+        feat = extract_features(seg, sr_int).reshape(1, -1)
         probas = model.predict_proba(feat)[0]  # [prob_human, prob_fake]
 
         fake_prob = float(probas[1]) if len(probas) > 1 else float(model.predict(feat)[0])
@@ -217,7 +223,7 @@ async def analyze(file: UploadFile = File(...), bg_tasks: BackgroundTasks = None
     }
 
     # 5. Persist run to SQLite history
-    save_result(file.filename, response)
+    save_result(original_filename, response)
 
     return response
 
