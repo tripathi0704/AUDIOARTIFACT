@@ -16,9 +16,6 @@ Flow on every /analyze request:
 """
 
 import os
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 import sys
 import types
 import tempfile
@@ -90,21 +87,20 @@ def get_wavlm():
         try:
             print(f"[Backend] Loading WavLM model ({WAVLM_MODEL_ID})...")
             try:
+                # Fast path: load from local cache if available (localhost)
                 _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
                 _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
-            except Exception:
-                # Online fallback if not already in local cache (e.g. Streamlit Community Cloud)
-                print(f"[Backend] Model not in local cache. Downloading {WAVLM_MODEL_ID}...")
-                os.environ.pop("HF_HUB_OFFLINE", None)
-                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            except Exception as e_local:
+                # Cloud fallback: download and cache from HuggingFace (Streamlit Community Cloud)
+                print(f"[Backend] Not in local cache ({e_local}). Downloading {WAVLM_MODEL_ID} from HuggingFace...")
                 _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID)
                 _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID)
-                os.environ["HF_HUB_OFFLINE"] = "1"
-                os.environ["TRANSFORMERS_OFFLINE"] = "1"
             _wavlm_model.eval()
-            print("[Backend] WavLM model loaded.")
+            print("[Backend] WavLM model successfully loaded.")
         except Exception as e:
             print(f"[Backend] Error loading WavLM: {e}")
+            import traceback
+            traceback.print_exc()
     return _wavlm_extractor, _wavlm_model
 
 
