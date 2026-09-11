@@ -16,6 +16,9 @@ Flow on every /analyze request:
 """
 
 import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 import sys
 import types
 import tempfile
@@ -39,6 +42,8 @@ except Exception:
 import joblib
 import librosa
 import numpy as np
+import torch
+from transformers import AutoFeatureExtractor, AutoModel
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,15 +53,17 @@ from db import init_db, save_result, get_history  # noqa: E402
 from vad_utils import filter_speech_vad  # noqa: E402
 
 # ---------------- CONFIG ----------------
+WAVLM_MODEL_ID = "microsoft/wavlm-base-plus"
 WINDOW_SEC = 2.0              # 2-second analysis window
 STRIDE_SEC = 1.0              # 1-second stride -> 50% overlap
-N_MFCC = 20
 SAMPLE_RATE = 16000
 MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model", "deepfake_detector.pkl"))
 LABEL_NAMES = {0: "Human", 1: "AI Fake"}
 # -----------------------------------------
 
 model = None
+_wavlm_extractor = None
+_wavlm_model = None
 
 
 def get_model():
@@ -76,9 +83,35 @@ def get_model():
     return model
 
 
+def get_wavlm():
+    """Lazily load and cache WavLM feature extractor and model on CPU."""
+    global _wavlm_extractor, _wavlm_model
+    if _wavlm_model is None:
+        try:
+            print(f"[Backend] Loading WavLM model ({WAVLM_MODEL_ID})...")
+            try:
+                _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
+                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
+            except Exception:
+                # Online fallback if not already in local cache (e.g. Streamlit Community Cloud)
+                print(f"[Backend] Model not in local cache. Downloading {WAVLM_MODEL_ID}...")
+                os.environ.pop("HF_HUB_OFFLINE", None)
+                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+                _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID)
+                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID)
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            _wavlm_model.eval()
+            print("[Backend] WavLM model loaded.")
+        except Exception as e:
+            print(f"[Backend] Error loading WavLM: {e}")
+    return _wavlm_extractor, _wavlm_model
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_model()
+    get_wavlm()
     yield
 
 
@@ -91,21 +124,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-def extract_features(segment: np.ndarray, sr: int = SAMPLE_RATE, n_mfcc: int = N_MFCC) -> np.ndarray:
-    """
-    Extract 60-feature vector: 20 MFCC + 20 Delta + 20 Delta2 (mean across time).
-    Matches feature_extraction.py v2.0 specification.
-    """
-    mfcc = librosa.feature.mfcc(y=segment, sr=sr, n_mfcc=n_mfcc)
-    delta_mfcc = librosa.feature.delta(mfcc)
-    delta2_mfcc = librosa.feature.delta(mfcc, order=2)
-
-    return np.hstack([
-        np.mean(mfcc, axis=1),
-        np.mean(delta_mfcc, axis=1),
-        np.mean(delta2_mfcc, axis=1)
-    ])
 
 
 def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = WINDOW_SEC, stride_sec: float = STRIDE_SEC):
@@ -192,8 +210,26 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
             "error": f"Audio clip is too short ({raw_duration}s). Minimum recommended length is 2 seconds."
         }
 
-    # 4. High-speed vectorized batch prediction (10x faster than single-call loop)
-    feats = np.array([extract_features(seg, sr_int) for _, _, seg in segments])
+    # 4. High-speed vectorized batch WavLM prediction (768-dim embeddings)
+    extractor, wavlm_model = get_wavlm()
+    if extractor is None or wavlm_model is None:
+        return {"error": "WavLM embedding model failed to initialize."}
+
+    seg_waves = [seg for _, _, seg in segments]
+    with torch.inference_mode():
+        if len(seg_waves) <= 16:
+            inputs = extractor(seg_waves, sampling_rate=sr_int, return_tensors="pt", padding=True)
+            out = wavlm_model(**inputs)
+            feats = out.last_hidden_state.mean(dim=1).cpu().numpy()
+        else:
+            feat_chunks = []
+            for b_idx in range(0, len(seg_waves), 16):
+                chunk = seg_waves[b_idx:b_idx + 16]
+                inputs = extractor(chunk, sampling_rate=sr_int, return_tensors="pt", padding=True)
+                out = wavlm_model(**inputs)
+                feat_chunks.append(out.last_hidden_state.mean(dim=1).cpu().numpy())
+            feats = np.vstack(feat_chunks)
+
     probas = clf.predict_proba(feats)  # shape: (N, 2)
     fake_probs = probas[:, 1]
     human_probs = probas[:, 0]
@@ -234,9 +270,9 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
     fake_ratio = round((fake_count / len(segments)) * 100, 1)
     fake_seconds = round(fake_count * STRIDE_SEC, 2)
 
-    if fake_ratio == 0:
+    if fake_ratio <= 15.0:
         verdict = "Authentic Human Voice"
-    elif fake_ratio >= 80.0:
+    elif fake_ratio >= 75.0:
         verdict = "Fully Synthetic Voice Detected"
     else:
         verdict = "Spliced Audio Detected"

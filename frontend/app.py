@@ -56,24 +56,8 @@ def is_local_backend_active(port: int = 8000) -> bool:
         return False
 
 
-@st.cache_resource
-def prewarm_models():
-    """Pre-warm model and Silero VAD into memory on app launch to eliminate cold start."""
-    try:
-        import sys
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        from backend.main import get_model
-        from backend.vad_utils import get_vad_model
-        get_model()
-        get_vad_model()
-    except Exception:
-        pass
-    return True
-
-
-prewarm_models()
+# Models are prewarmed by FastAPI backend on port 8000.
+# Streamlit remains lightweight and loads instantly without duplicating model memory.
 
 st.set_page_config(
     page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",
@@ -334,13 +318,13 @@ div.stButton > button:hover {
 # ----------------------------------------------------------------------
 st.markdown("""
 <div class="brand-nav">
-  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0</span></div>
-  <div class="status-badge"><i></i>ENGINE: VAD + 50% OVERLAP + 60-MFCC</div>
+  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 SOTA</span></div>
+  <div class="status-badge"><i></i>ENGINE: Silero VAD + 50% Overlap + WavLM 768-dim Embeddings</div>
 </div>
 <h1 class="hero-title">Audio<span class="real">Artifact</span> — Timeline-Based <span class="fake">Deepfake</span> Audio Localizer</h1>
 <p class="hero-sub">
   Forensic-grade audio analysis utilizing Silero VAD, 50% overlapping windows (2s window, 1s stride),
-  and 60-feature dynamic derivatives (MFCC + Delta + Delta-Delta) with continuous probability reporting.
+  and Microsoft WavLM 768-dimensional deep acoustic embeddings with continuous probability reporting.
 </p>
 """, unsafe_allow_html=True)
 
@@ -368,7 +352,7 @@ else:
 # ANALYSIS EXECUTION
 # ----------------------------------------------------------------------
 if uploaded_file is not None and analyze_clicked:
-    with st.spinner("Processing audio: Running Silero VAD, 50% overlapping windowing & 60-feature inference..."):
+    with st.spinner("Processing audio: Running Silero VAD, 50% overlapping windowing & WavLM deep embedding inference..."):
         uploaded_file.seek(0)
         file_bytes = uploaded_file.getvalue()
         data = None
@@ -383,10 +367,12 @@ if uploaded_file is not None and analyze_clicked:
         if use_http:
             try:
                 files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
-                res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=30)
+                res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
                 if res.status_code == 200:
                     data = res.json()
-            except Exception:
+                else:
+                    data = {"error": f"Backend API returned status {res.status_code}: {res.text}"}
+            except Exception as req_err:
                 data = None
 
         # 2. Instantaneous standalone execution (0-delay for Streamlit Community Cloud)

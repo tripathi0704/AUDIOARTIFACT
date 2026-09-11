@@ -1,67 +1,58 @@
 """
 feature_extraction.py
 ----------------------
-Purpose : Convert raw audio files into a 60-feature dataset (MFCC + Delta + Delta-Delta)
-          with Silero VAD silence filtering and 50% overlapping windows (2s window, 1s stride).
-
-Roadmap v2.0 Pipeline:
-1. Load .wav / .mp3 from data/real/ and data/fake/
-2. Run Voice Activity Detection (Silero VAD) to filter out non-speech silence
-3. Slice speech with 50% overlapping windows (2.0s window, 1.0s stride)
-4. Extract 60-feature vector per segment:
-     - 20 MFCCs (mean across time)
-     - 20 Delta MFCCs (velocity)
-     - 20 Delta-Delta MFCCs (acceleration)
-5. Save aggregated dataset to features.csv
+Purpose : Convert raw audio files into a 768-feature dataset using Microsoft WavLM
+          (microsoft/wavlm-base-plus) with Silero VAD silence filtering and 50%
+          overlapping sliding windows (2.0s window, 1.0s stride).
 """
 
 import os
 import sys
 import glob
+import time
+import types
 import argparse
 import numpy as np
 import pandas as pd
+import torch
+
+# Windows 11 Smart App Control & cross-platform safe numba bypass for librosa
+try:
+    from numba import _dispatcher
+except Exception:
+    _m = types.ModuleType("numba")
+    _m.jit = lambda *a, **kw: (lambda f: f) if a and callable(a[0]) else (lambda f: f)
+    _m.njit = _m.jit
+    _m.vectorize = _m.jit
+    _m.guvectorize = _m.jit
+    _m.stencil = _m.jit
+    _m.prange = range
+    sys.modules["numba"] = _m
+    sys.modules["numba.core"] = types.ModuleType("numba.core")
+    sys.modules["numba.core.decorators"] = _m
+
 import librosa
+import soundfile as sf
+from transformers import AutoFeatureExtractor, AutoModel
 
 # Support importing vad_utils whether run from root or elsewhere
 sys.path.append(os.path.join(os.path.dirname(__file__), "backend"))
 from vad_utils import filter_speech_vad  # noqa: E402
 
 # ---------------- CONFIG ----------------
+WAVLM_MODEL_ID = "microsoft/wavlm-base-plus"
 WINDOW_SEC = 2.0              # 2-second analysis window
 STRIDE_SEC = 1.0              # 1-second stride -> 50% overlap
-N_MFCC = 20                   # 20 base MFCC coefficients
 SAMPLE_RATE = 16000           # 16kHz standard sampling rate
 DATA_DIR = "data"
-OUTPUT_CSV = "features.csv"
+DEFAULT_OUTPUT_CSV = "features_wavlm.csv"
 LABELS = {"real": 0, "fake": 1}  # 0 = Human, 1 = AI Fake
+EMBEDDING_DIM = 768
 # -----------------------------------------
 
 
-def extract_advanced_features(y: np.ndarray, sr: int = SAMPLE_RATE, n_mfcc: int = N_MFCC) -> np.ndarray:
-    """
-    Extracts a 60-dimensional feature vector per audio segment:
-    - 20 MFCC coefficients (mean over time)
-    - 20 Delta MFCC coefficients (1st order derivative)
-    - 20 Delta-Delta MFCC coefficients (2nd order derivative)
-    """
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-    delta_mfcc = librosa.feature.delta(mfcc)
-    delta2_mfcc = librosa.feature.delta(mfcc, order=2)
-
-    return np.hstack([
-        np.mean(mfcc, axis=1),
-        np.mean(delta_mfcc, axis=1),
-        np.mean(delta2_mfcc, axis=1)
-    ])
-
-
 def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = WINDOW_SEC, stride_sec: float = STRIDE_SEC):
-    """
-    Slice audio array into overlapping windows.
-    Returns:
-        List of tuples: (start_time_sec, end_time_sec, segment_waveform)
-    """
+    """Slice audio array into overlapping windows."""
     win_len = int(window_sec * sr)
     stride_len = int(stride_sec * sr)
     segments = []
@@ -79,56 +70,26 @@ def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = 
     return segments
 
 
-def process_file(filepath: str, label: int, max_segments: int = 40):
-    """
-    Load one audio file, apply VAD silence removal, slice with 50% overlap,
-    and extract 60 features per segment.
-    """
-    rows = []
+def load_audio_16k(filepath: str) -> np.ndarray:
+    """Robust 16kHz mono audio loader supporting WAV and MP3."""
     try:
-        y, sr = librosa.load(filepath, sr=SAMPLE_RATE, mono=True)
-    except Exception as e:
-        print(f"  [skip] could not read {filepath}: {e}")
-        return rows
-
-    sr_int: int = int(sr)
-
-    # 1. Voice Activity Detection (remove silence chunks)
-    y_speech, _ = filter_speech_vad(y, sr_int)
-    if len(y_speech) < int(SAMPLE_RATE * 1.0):
-        y_speech = y
-
-    # 2. Overlapping slicing (2s window, 1s stride)
-    segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
-
-    if max_segments and len(segments) > max_segments:
-        segments = segments[:max_segments]
-
-    # 3. 60-feature extraction per segment
-    for _, _, seg in segments:
-        features = extract_advanced_features(seg, sr_int)
-        rows.append(list(features) + [label])
-
-    return rows
+        data, sr = sf.read(filepath, dtype="float32")
+        if data.ndim > 1:
+            data = np.mean(data, axis=1)
+        if sr != SAMPLE_RATE:
+            data = librosa.resample(data, orig_sr=sr, target_sr=SAMPLE_RATE)
+        return data
+    except Exception:
+        y, _ = librosa.load(filepath, sr=SAMPLE_RATE, mono=True)
+        return y
 
 
-def _worker_task(args):
-    """Worker task wrapper for ProcessPoolExecutor."""
-    filepath, label, max_segments = args
-    return process_file(filepath, label, max_segments)
-
-
-def build_dataset(max_files_per_class: int = 0, num_workers: int = None):
-    """
-    Extracts features across files in data/real and data/fake
-    and outputs features.csv.
-    
-    Parameters:
-        max_files_per_class (int): Max files per class. 0 or None means process ALL files.
-        num_workers (int): Number of parallel CPU workers. Defaults to (CPU count - 2).
-    """
-    import time
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPUT_CSV, batch_size: int = 32):
+    """Extracts WavLM embeddings with safe sequential preprocessing and batched inference."""
+    print(f"Initializing WavLM ({WAVLM_MODEL_ID})...")
+    extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID)
+    model = AutoModel.from_pretrained(WAVLM_MODEL_ID)
+    model.eval()
 
     tasks = []
     for folder_name, label in LABELS.items():
@@ -137,70 +98,87 @@ def build_dataset(max_files_per_class: int = 0, num_workers: int = None):
             glob.glob(os.path.join(folder_path, "*.wav")) +
             glob.glob(os.path.join(folder_path, "*.mp3"))
         )
-
         if max_files_per_class and max_files_per_class > 0:
             files = files[:max_files_per_class]
 
-        print(f"Found {len(files)} files in '{folder_name}' folder (label={label})")
+        print(f"Selected {len(files)} files from '{folder_name}' (label={label})")
         for f in files:
-            tasks.append((f, label, 40))
+            tasks.append((f, label))
 
     if not tasks:
-        print("\nNo audio files found. Add files inside data/real/ and data/fake/ first.")
+        print("No audio files found inside data/real/ or data/fake/.")
         return
 
-    total_tasks = len(tasks)
-    if num_workers is None:
-        cpu_available = os.cpu_count() or 4
-        num_workers = max(1, min(cpu_available - 2, 14))
-
-    print(f"\nExtracting features from {total_tasks} total files using {num_workers} parallel workers...")
+    total_files = len(tasks)
+    print(f"\nProcessing {total_files} total audio files...")
     start_time = time.time()
+    all_segments_with_labels = []
+
+    for idx, (filepath, label) in enumerate(tasks, 1):
+        try:
+            y = load_audio_16k(filepath)
+            sr_int = int(SAMPLE_RATE)
+            y_speech, _ = filter_speech_vad(y, sr_int)
+            if len(y_speech) < int(SAMPLE_RATE * 1.0):
+                y_speech = y
+
+            segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+            if len(segments) > 25:
+                segments = segments[:25]
+
+            for _, _, seg in segments:
+                all_segments_with_labels.append((seg, label))
+        except Exception as e:
+            print(f"  [skip] {os.path.basename(filepath)}: {e}")
+
+        if idx % 10 == 0 or idx == total_files:
+            pct = (idx / total_files) * 100
+            print(f"  Audio VAD progress: [{idx}/{total_files}] ({pct:.1f}%) | Segments collected: {len(all_segments_with_labels)}", end="\r")
+
+    print(f"\nVAD slicing complete in {time.time() - start_time:.1f}s. Total segments: {len(all_segments_with_labels)}")
+
+    print(f"\nExtracting 768-dim WavLM embeddings in batches of {batch_size}...")
+    t2_start = time.time()
     all_rows = []
-    completed = 0
+    total_segs = len(all_segments_with_labels)
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(_worker_task, task) for task in tasks]
-        for future in as_completed(futures):
-            try:
-                rows = future.result()
-                all_rows.extend(rows)
-            except Exception as e:
-                print(f"Worker error: {e}")
-            
-            completed += 1
-            if completed % 50 == 0 or completed == total_tasks:
-                elapsed = time.time() - start_time
-                pct = (completed / total_tasks) * 100
-                rate = completed / max(elapsed, 0.001)
-                remaining = (total_tasks - completed) / max(rate, 0.001)
-                print(f"  [{completed}/{total_tasks}] ({pct:.1f}%) | Segments: {len(all_rows)} | Speed: {rate:.1f} files/s | ETA: {remaining:.0f}s", end="\r")
+    for i in range(0, total_segs, batch_size):
+        chunk = all_segments_with_labels[i:i + batch_size]
+        waves = [item[0] for item in chunk]
+        labels = [item[1] for item in chunk]
 
-    print("\n\nWriting features to CSV...")
-    # 60 features: 20 MFCC + 20 Delta + 20 Delta2
-    columns = (
-        [f"mfcc_{i+1}" for i in range(N_MFCC)] +
-        [f"delta_{i+1}" for i in range(N_MFCC)] +
-        [f"delta2_{i+1}" for i in range(N_MFCC)] +
-        ["label"]
-    )
+        inputs = extractor(waves, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True)
+        with torch.no_grad():
+            outputs = model(**inputs)
+            embs = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+
+        for emb, lbl in zip(embs, labels):
+            all_rows.append(list(emb) + [lbl])
+
+        done = min(i + batch_size, total_segs)
+        rate = done / max(time.time() - t2_start, 0.001)
+        eta = (total_segs - done) / max(rate, 0.001)
+        print(f"  WavLM inference: [{done}/{total_segs}] ({done/total_segs*100:.1f}%) | {rate:.1f} segs/s | ETA: {eta:.0f}s", end="\r")
+
+    print("\n\nSaving dataset to CSV...")
+    columns = [f"wavlm_{i}" for i in range(EMBEDDING_DIM)] + ["label"]
     df = pd.DataFrame(all_rows, columns=columns)
-    df.to_csv(OUTPUT_CSV, index=False)
+    df.to_csv(output_csv, index=False)
+
     total_time = time.time() - start_time
-    print(f"Dataset build complete in {total_time:.1f} seconds ({total_time/60:.2f} mins)!")
-    print(f"Total segments saved to {OUTPUT_CSV}: {len(df)} ({len(columns)-1} features per row).")
+    print(f"Done in {total_time:.1f}s ({total_time/60:.2f} mins)!")
+    print(f"Saved {len(df)} segments to {output_csv}.")
     print("Class distribution:")
     print(df["label"].value_counts().rename({0: "real", 1: "fake"}))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract 60 MFCC+Delta features with VAD and 50% overlap")
-    parser.add_argument("--all", action="store_true", help="Process ALL files in data/ without limit (default)")
-    parser.add_argument("--limit", type=int, default=None, help="Custom limit: max files per class (e.g. --limit 500)")
-    parser.add_argument("--workers", type=int, default=None, help="Number of parallel CPU workers")
+    parser = argparse.ArgumentParser(description="WavLM 768-dim Feature Extractor")
+    parser.add_argument("--all", action="store_true", help="Process ALL files in data/")
+    parser.add_argument("--limit", type=int, default=50, help="Max files per class (default: 50)")
+    parser.add_argument("--output", type=str, default=DEFAULT_OUTPUT_CSV, help="Output CSV filename")
+    parser.add_argument("--batch-size", type=int, default=32, help="Inference batch size")
     args = parser.parse_args()
 
-    # If user passes --limit, use it; otherwise process all files
-    max_files = args.limit if (args.limit is not None and not args.all) else 0
-    build_dataset(max_files_per_class=max_files, num_workers=args.workers)
-
+    max_f = 0 if args.all else args.limit
+    build_dataset(max_files_per_class=max_f, output_csv=args.output, batch_size=args.batch_size)
