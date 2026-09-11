@@ -11,7 +11,7 @@ import sqlite3
 import json
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "history.db")
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "history.db"))
 
 
 def get_connection():

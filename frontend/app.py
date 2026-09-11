@@ -381,8 +381,14 @@ if uploaded_file is not None and analyze_clicked:
                 from backend.main import analyze_audio_data
                 data = analyze_audio_data(file_bytes, uploaded_file.name)
             except Exception as e:
-                st.error(f"Analysis failed: {e}")
+                import traceback
+                st.error(f"Forensic Analysis Error: {e}")
+                st.code(traceback.format_exc())
                 st.stop()
+
+    if not data:
+        st.error("No analysis result returned. Please check the uploaded audio file format (.wav or .mp3 recommended).")
+        st.stop()
 
     if "error" in data:
         st.error(data["error"])

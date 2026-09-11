@@ -35,7 +35,7 @@ WINDOW_SEC = 2.0              # 2-second analysis window
 STRIDE_SEC = 1.0              # 1-second stride -> 50% overlap
 N_MFCC = 20
 SAMPLE_RATE = 16000
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "deepfake_detector.pkl")
+MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model", "deepfake_detector.pkl"))
 LABEL_NAMES = {0: "Human", 1: "AI Fake"}
 # -----------------------------------------
 
@@ -124,6 +124,7 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
 
     y = None
+    sr = SAMPLE_RATE
     # 1. Fast in-memory audio decoding (avoids disk tempfiles for WAV/FLAC/OGG)
     try:
         import io
@@ -153,6 +154,9 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    if y is None or len(y) == 0:
+        return {"error": "Failed to decode audio file. Please ensure it is a valid .wav or .mp3 file."}
 
     raw_duration = round(len(y) / SAMPLE_RATE, 2)
     sr_int: int = int(SAMPLE_RATE)
@@ -221,15 +225,23 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         verdict = "Spliced Audio Detected"
 
     # 4. Mel-Spectrogram voice signature payload for visual reporting
-    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=32)
-    mel_db = librosa.power_to_db(mel_spec, ref=np.max)
-    max_frames = 100
-    if mel_db.shape[1] > max_frames:
-        idx = np.linspace(0, mel_db.shape[1] - 1, max_frames).astype(int)
-        mel_db = mel_db[:, idx]
+    try:
+        mel_spec = librosa.feature.melspectrogram(y=y, sr=SAMPLE_RATE, n_mels=32)
+        mel_db = librosa.power_to_db(mel_spec, ref=np.max)
+        max_frames = 100
+        if mel_db.shape[1] > max_frames:
+            idx = np.linspace(0, mel_db.shape[1] - 1, max_frames).astype(int)
+            mel_db = mel_db[:, idx]
 
-    time_axis = np.linspace(0, raw_duration, mel_db.shape[1]).round(2).tolist()
-    mel_axis = list(range(mel_db.shape[0]))
+        time_axis = np.linspace(0, raw_duration, mel_db.shape[1]).round(2).tolist()
+        mel_axis = list(range(mel_db.shape[0]))
+        spec_dict = {
+            "z": mel_db.round(2).tolist(),
+            "time": time_axis,
+            "mel": mel_axis,
+        }
+    except Exception:
+        spec_dict = {}
 
     response = {
         "filename": original_filename,
@@ -241,11 +253,7 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         "verdict": verdict,
         "highest_risk_segment": highest_risk,
         "segments": results,
-        "spectrogram": {
-            "z": mel_db.round(2).tolist(),
-            "time": time_axis,
-            "mel": mel_axis,
-        },
+        "spectrogram": spec_dict,
     }
 
     # 5. Persist run to SQLite history
