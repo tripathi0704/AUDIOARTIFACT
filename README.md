@@ -1,13 +1,20 @@
 # ◈ AudioArtifact v2.0 — Timeline-Based Deepfake Audio Localizer
 
-AudioArtifact is an advanced timeline-based forensic system for detecting and localizing synthetic speech segments in audio recordings. It leverages **Silero Voice Activity Detection (VAD)**, **50% overlapping sliding windows**, **60-dimensional dynamic MFCCs (MFCC + Delta + Delta²)**, **calibrated XGBoost continuous probability modeling**, and an **interactive Plotly + Streamlit visualization dashboard**.
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://audioartifact.streamlit.app)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+AudioArtifact is an advanced timeline-based forensic system for detecting and localizing synthetic speech segments in audio recordings. It leverages **Silero Voice Activity Detection (VAD)**, **50% overlapping sliding windows**, **Microsoft WavLM 768-dimensional deep acoustic embeddings**, **calibrated XGBoost continuous probability modeling**, and an **interactive Plotly + Streamlit visualization dashboard**.
 
 ---
 
-## 🌐 Deploy Online (100% Free Public Web Demo)
+## 🌐 Live Web App (Direct Access)
 
-Want to deploy AudioArtifact on the internet so anyone can test audio from their browser or mobile?
-Follow our step-by-step guide in **[DEPLOYMENT.md](file:///d:/audioartifact/DEPLOYMENT.md)** to host it on **Hugging Face Spaces** for free (with 16 GB RAM + 2 vCPU).
+> [!TIP]
+> You can try the live interactive forensic detector directly in your browser without installing anything:
+> 👉 **[https://audioartifact.streamlit.app](https://audioartifact.streamlit.app)**
+
+Upload any suspicious audio file (`.wav` or `.mp3`) to test the real-time deepfake timeline detector instantly!
 
 ---
 
