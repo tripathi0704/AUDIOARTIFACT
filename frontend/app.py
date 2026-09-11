@@ -56,8 +56,22 @@ def is_local_backend_active(port: int = 8000) -> bool:
         return False
 
 
-# Models are prewarmed by FastAPI backend on port 8000.
-# Streamlit remains lightweight and loads instantly without duplicating model memory.
+@st.cache_resource(show_spinner="Initializing forensic detection engine (downloading foundation model on cloud)...")
+def preload_cloud_models():
+    """Download and cache foundation models into Streamlit Cloud memory on startup."""
+    import sys
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from backend.main import get_model, get_wavlm
+    get_model()
+    return get_wavlm()
+
+
+# If local FastAPI backend on port 8000 is NOT active (e.g. running standalone on Streamlit Community Cloud),
+# preload and cache the model once on cloud boot so user scans never fail!
+if not is_local_backend_active(8000):
+    preload_cloud_models()
 
 st.set_page_config(
     page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",

@@ -80,26 +80,31 @@ def get_model():
     return model
 
 
+_wavlm_error = None
+
+
 def get_wavlm():
     """Lazily load and cache WavLM feature extractor and model on CPU."""
-    global _wavlm_extractor, _wavlm_model
+    global _wavlm_extractor, _wavlm_model, _wavlm_error
     if _wavlm_model is None:
         try:
             print(f"[Backend] Loading WavLM model ({WAVLM_MODEL_ID})...")
             try:
                 # Fast path: load from local cache if available (localhost)
                 _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
-                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID, local_files_only=True)
+                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID, low_cpu_mem_usage=True, local_files_only=True)
             except Exception as e_local:
                 # Cloud fallback: download and cache from HuggingFace (Streamlit Community Cloud)
                 print(f"[Backend] Not in local cache ({e_local}). Downloading {WAVLM_MODEL_ID} from HuggingFace...")
                 _wavlm_extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID)
-                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID)
+                _wavlm_model = AutoModel.from_pretrained(WAVLM_MODEL_ID, low_cpu_mem_usage=True)
             _wavlm_model.eval()
             print("[Backend] WavLM model successfully loaded.")
+            _wavlm_error = None
         except Exception as e:
-            print(f"[Backend] Error loading WavLM: {e}")
             import traceback
+            _wavlm_error = f"{type(e).__name__}: {e}"
+            print(f"[Backend] Error loading WavLM: {_wavlm_error}")
             traceback.print_exc()
     return _wavlm_extractor, _wavlm_model
 
@@ -209,7 +214,8 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
     # 4. High-speed vectorized batch WavLM prediction (768-dim embeddings)
     extractor, wavlm_model = get_wavlm()
     if extractor is None or wavlm_model is None:
-        return {"error": "WavLM embedding model failed to initialize."}
+        err_detail = _wavlm_error if _wavlm_error else "Model weights could not be loaded."
+        return {"error": f"WavLM model failed to initialize: {err_detail}"}
 
     seg_waves = [seg for _, _, seg in segments]
     with torch.inference_mode():
