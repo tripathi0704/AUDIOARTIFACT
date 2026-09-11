@@ -13,9 +13,27 @@ Features:
 """
 
 import os
+import sys
+import types
 import io
 import json
 import requests
+
+# Windows 11 Smart App Control & cross-platform safe numba bypass for librosa
+try:
+    from numba import _dispatcher
+except Exception:
+    _m = types.ModuleType("numba")
+    _m.jit = lambda *a, **kw: (lambda f: f) if a and callable(a[0]) else (lambda f: f)
+    _m.njit = _m.jit
+    _m.vectorize = _m.jit
+    _m.guvectorize = _m.jit
+    _m.stencil = _m.jit
+    _m.prange = range
+    sys.modules["numba"] = _m
+    sys.modules["numba.core"] = types.ModuleType("numba.core")
+    sys.modules["numba.core.decorators"] = _m
+
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
