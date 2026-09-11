@@ -15,7 +15,8 @@ DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "history
 
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    return sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
 
 
 def init_db():
@@ -57,7 +58,13 @@ def save_result(filename: str, result: dict):
     duration_sec = float(result.get("total_duration", 0.0))
     fake_ratio = float(result.get("fake_ratio", 0.0))
     verdict = str(result.get("verdict", ""))
-    result_str = json.dumps(result)
+    
+    # Exclude heavy spectrogram from SQLite to keep database lightweight & fast
+    res_clean = {k: v for k, v in result.items() if k != "spectrogram"}
+    try:
+        result_str = json.dumps(res_clean, default=str)
+    except Exception:
+        result_str = "{}"
     created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     cursor.execute(

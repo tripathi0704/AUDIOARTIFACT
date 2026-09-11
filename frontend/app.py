@@ -415,6 +415,31 @@ if uploaded_file is not None and analyze_clicked:
     st.session_state["last_result"] = data
     st.session_state["analyzed_file_name"] = uploaded_file.name
 
+    # Explicitly ensure result is saved into SQLite history.db
+    try:
+        import sys
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from backend.db import save_result
+        save_result(uploaded_file.name, data)
+    except Exception:
+        pass
+
+    # Maintain session scan history for instant retrieval across sessions / cloud hosting
+    if "session_scans" not in st.session_state:
+        st.session_state["session_scans"] = []
+    from datetime import datetime, timezone
+    created_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    st.session_state["session_scans"].insert(0, {
+        "filename": uploaded_file.name,
+        "duration_sec": data.get("total_duration", 0.0),
+        "fake_ratio": data.get("fake_ratio", 0.0),
+        "verdict": data.get("verdict", ""),
+        "created_at": created_ts,
+        "result": data
+    })
+
 # ----------------------------------------------------------------------
 # RENDER FORENSIC REPORT
 # ----------------------------------------------------------------------
@@ -620,37 +645,79 @@ if "last_result" in st.session_state:
         st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
 
 # ----------------------------------------------------------------------
-# SCAN HISTORY (SQLITE)
+# SCAN HISTORY (SQLITE & SESSION BACKUP)
 # ----------------------------------------------------------------------
 st.markdown('<div class="section-label">Database Scan History</div>', unsafe_allow_html=True)
-try:
-    hist_res = requests.get(f"{BACKEND_URL}/history?limit=10", timeout=5)
-    if hist_res.status_code == 200:
-        history_records = hist_res.json()
-        if history_records:
-            with st.expander(f"Recent Database Records ({len(history_records)} scans)", expanded=False):
-                for h in history_records:
-                    v = h.get("verdict", "")
-                    col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
-                    st.markdown(f"""
-                    <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-                      <div>
-                        <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
-                        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
-                          Duration: {h.get('duration_sec', 0):.1f}s · Created: {h.get('created_at', '')[:19].replace('T', ' ')}
-                        </div>
-                      </div>
-                      <div style="text-align:right;">
-                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;">
-                          {v or 'Scanned'}
-                        </span>
-                        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
-                          Fake Ratio: {h.get('fake_ratio', 0):.1f}%
-                        </div>
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            st.caption("No scan records in history database yet.")
-except Exception:
-    st.caption("Backend offline or history currently unavailable.")
+
+history_records = []
+
+# 1. Try FastAPI backend via HTTP if local 8000 is open or remote backend URL is provided
+use_http = False
+if BACKEND_URL and ("127.0.0.1:8000" in BACKEND_URL or "localhost:8000" in BACKEND_URL):
+    use_http = is_local_backend_active(8000)
+elif BACKEND_URL and not ("127.0.0.1" in BACKEND_URL or "localhost" in BACKEND_URL):
+    use_http = True
+
+if use_http:
+    try:
+        hist_res = requests.get(f"{BACKEND_URL}/history?limit=10", timeout=2)
+        if hist_res.status_code == 200:
+            history_records = hist_res.json()
+    except Exception:
+        history_records = []
+
+# 2. Standalone fallback (Direct SQLite database access for Streamlit Cloud / Standalone mode)
+if not history_records:
+    try:
+        import sys
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from backend.db import get_history
+        history_records = get_history(limit=10)
+    except Exception:
+        history_records = []
+
+# 3. Always merge active session scans with database records to ensure 100% visibility
+combined_records = []
+seen_entries = set()
+
+# Include recent in-memory session scans first
+for s in st.session_state.get("session_scans", []):
+    key = (s.get("filename", ""), str(s.get("created_at", ""))[:19])
+    if key not in seen_entries:
+        seen_entries.add(key)
+        combined_records.append(s)
+
+# Include persistent database records
+for r in history_records:
+    key = (r.get("filename", ""), str(r.get("created_at", ""))[:19])
+    if key not in seen_entries:
+        seen_entries.add(key)
+        combined_records.append(r)
+
+if combined_records:
+    with st.expander(f"Recent Scan Records ({len(combined_records)} scans)", expanded=True):
+        for h in combined_records:
+            v = h.get("verdict", "")
+            col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
+            st.markdown(f"""
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+              <div>
+                <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
+                  Duration: {h.get('duration_sec', 0):.1f}s · Created: {str(h.get('created_at', ''))[:19].replace('T', ' ')}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;">
+                  {v or 'Scanned'}
+                </span>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
+                  Fake Ratio: {h.get('fake_ratio', 0):.1f}%
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+else:
+    st.caption("No scan records yet. Upload and analyze an audio file above to see scan history.")
