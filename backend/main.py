@@ -42,10 +42,12 @@ LABEL_NAMES = {0: "Human", 1: "AI Fake"}
 model = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def get_model():
+    """Lazily load detection model and initialize database if needed."""
     global model
     init_db()
+    if model is not None:
+        return model
     if os.path.exists(MODEL_PATH):
         try:
             model = joblib.load(MODEL_PATH)
@@ -54,6 +56,12 @@ async def lifespan(app: FastAPI):
             print(f"[Backend] Error loading model: {e}")
     else:
         print(f"[Backend] WARNING: No model found at {MODEL_PATH}. Train one with train_model.py")
+    return model
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    get_model()
     yield
 
 
@@ -106,16 +114,16 @@ def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = 
     return segments
 
 
-@app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
-    if model is None:
+def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") -> dict:
+    """
+    Core forensic analysis engine. Can be called directly or via FastAPI.
+    """
+    clf = get_model()
+    if clf is None:
         return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
 
-    # Save upload to a temporary file for librosa to process
-    original_filename: str = file.filename or "upload"
     suffix = os.path.splitext(original_filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
@@ -128,7 +136,6 @@ async def analyze(file: UploadFile = File(...)):
             os.remove(tmp_path)
 
     raw_duration = round(len(y) / sr, 2)
-
     sr_int: int = int(sr)
 
     # 1. Voice Activity Detection (silence removal)
@@ -152,9 +159,9 @@ async def analyze(file: UploadFile = File(...)):
     # 3. Predict continuous probabilities for each segment
     for i, (start_t, end_t, seg) in enumerate(segments):
         feat = extract_features(seg, sr_int).reshape(1, -1)
-        probas = model.predict_proba(feat)[0]  # [prob_human, prob_fake]
+        probas = clf.predict_proba(feat)[0]  # [prob_human, prob_fake]
 
-        fake_prob = float(probas[1]) if len(probas) > 1 else float(model.predict(feat)[0])
+        fake_prob = float(probas[1]) if len(probas) > 1 else float(clf.predict(feat)[0])
         human_prob = float(probas[0]) if len(probas) > 1 else (1.0 - fake_prob)
 
         pred = 1 if fake_prob >= 0.50 else 0
@@ -206,7 +213,7 @@ async def analyze(file: UploadFile = File(...)):
     mel_axis = list(range(mel_db.shape[0]))
 
     response = {
-        "filename": file.filename,
+        "filename": original_filename,
         "total_duration": raw_duration,
         "analyzed_duration": total_analyzed_duration,
         "segments_count": len(segments),
@@ -223,9 +230,18 @@ async def analyze(file: UploadFile = File(...)):
     }
 
     # 5. Persist run to SQLite history
-    save_result(original_filename, response)
+    try:
+        save_result(original_filename, response)
+    except Exception as e:
+        print(f"[Backend] Warning: could not save to history.db: {e}")
 
     return response
+
+
+@app.post("/analyze")
+async def analyze(file: UploadFile = File(...)):
+    content = await file.read()
+    return analyze_audio_data(content, file.filename or "upload.wav")
 
 
 @app.get("/history")

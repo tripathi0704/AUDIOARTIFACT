@@ -12,6 +12,7 @@ Features:
 - SQLite Scan History Inspector
 """
 
+import os
 import io
 import json
 import requests
@@ -21,7 +22,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import librosa
 
-BACKEND_URL = "http://127.0.0.1:8000"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(
     page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",
@@ -318,14 +319,30 @@ else:
 if uploaded_file is not None and analyze_clicked:
     with st.spinner("Processing audio: Running Silero VAD, 50% overlapping windowing & 60-feature inference..."):
         uploaded_file.seek(0)
-        files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
+        file_bytes = uploaded_file.getvalue()
+        data = None
+
+        # 1. Try FastAPI backend first (when running multi-server or Docker)
         try:
+            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
             res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
-            res.raise_for_status()
-            data = res.json()
-        except Exception as e:
-            st.error(f"Could not reach AudioArtifact backend: {e}. Ensure backend is running (`uvicorn backend.main:app --port 8000`).")
-            st.stop()
+            if res.status_code == 200:
+                data = res.json()
+        except Exception:
+            pass
+
+        # 2. Seamless fallback to internal engine (for Streamlit Community Cloud)
+        if not data or "error" in data:
+            try:
+                import sys
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
+                from backend.main import analyze_audio_data
+                data = analyze_audio_data(file_bytes, uploaded_file.name)
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+                st.stop()
 
     if "error" in data:
         st.error(data["error"])
