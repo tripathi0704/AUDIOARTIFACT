@@ -24,6 +24,39 @@ import librosa
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
+
+def is_local_backend_active(port: int = 8000) -> bool:
+    """Non-blocking 0.05s check to see if local uvicorn is actually listening."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.05)
+        s.connect(("127.0.0.1", port))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+@st.cache_resource
+def prewarm_models():
+    """Pre-warm model and Silero VAD into memory on app launch to eliminate cold start."""
+    try:
+        import sys
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from backend.main import get_model
+        from backend.vad_utils import get_vad_model
+        get_model()
+        get_vad_model()
+    except Exception:
+        pass
+    return True
+
+
+prewarm_models()
+
 st.set_page_config(
     page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",
     page_icon="◈",
@@ -322,16 +355,23 @@ if uploaded_file is not None and analyze_clicked:
         file_bytes = uploaded_file.getvalue()
         data = None
 
-        # 1. Try FastAPI backend first (when running multi-server or Docker)
-        try:
-            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
-            res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
-            if res.status_code == 200:
-                data = res.json()
-        except Exception:
-            pass
+        # 1. Try FastAPI backend first ONLY if an external URL is given or local port 8000 is open
+        use_http = False
+        if BACKEND_URL and ("127.0.0.1:8000" in BACKEND_URL or "localhost:8000" in BACKEND_URL):
+            use_http = is_local_backend_active(8000)
+        elif BACKEND_URL and not ("127.0.0.1" in BACKEND_URL or "localhost" in BACKEND_URL):
+            use_http = True  # Custom remote backend
 
-        # 2. Seamless fallback to internal engine (for Streamlit Community Cloud)
+        if use_http:
+            try:
+                files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
+                res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=30)
+                if res.status_code == 200:
+                    data = res.json()
+            except Exception:
+                data = None
+
+        # 2. Instantaneous standalone execution (0-delay for Streamlit Community Cloud)
         if not data or "error" in data:
             try:
                 import sys
