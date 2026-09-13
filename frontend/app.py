@@ -17,6 +17,7 @@ import sys
 import types
 import io
 import json
+import uuid
 import requests
 
 # Windows 11 Smart App Control & cross-platform safe numba bypass for librosa
@@ -79,6 +80,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# ----------------------------------------------------------------------
+# EPHEMERAL SESSION INITIALIZATION (ISOLATED PER BROWSER WINDOW)
+# ----------------------------------------------------------------------
+if "session_token" not in st.session_state:
+    st.session_state["session_token"] = uuid.uuid4().hex[:6].upper()
+if "session_scans" not in st.session_state:
+    st.session_state["session_scans"] = []
 
 # ----------------------------------------------------------------------
 # GLOBAL DARK THEME STYLING
@@ -330,10 +339,15 @@ div.stButton > button:hover {
 # ----------------------------------------------------------------------
 # HEADER & BRAND
 # ----------------------------------------------------------------------
-st.markdown("""
+st.markdown(f"""
 <div class="brand-nav">
   <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 SOTA</span></div>
-  <div class="status-badge"><i></i>ENGINE: Silero VAD + 50% Overlap + WavLM 768-dim Embeddings</div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <div class="status-badge" style="color:var(--cyan);border-color:rgba(94,234,212,0.3);">
+      <i></i>SESSION #{st.session_state['session_token']}
+    </div>
+    <div class="status-badge">Silero VAD · 50% Overlap · WavLM 768-dim</div>
+  </div>
 </div>
 <h1 class="hero-title">Audio<span class="real">Artifact</span> — Timeline-Based <span class="fake">Deepfake</span> Audio Localizer</h1>
 <p class="hero-sub">
@@ -645,79 +659,66 @@ if "last_result" in st.session_state:
         st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
 
 # ----------------------------------------------------------------------
-# SCAN HISTORY (SQLITE & SESSION BACKUP)
+# ACTIVE SESSION SCAN HISTORY (ISOLATED TO CURRENT BROWSER WINDOW)
 # ----------------------------------------------------------------------
-st.markdown('<div class="section-label">Database Scan History</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-label">Active Session History (Private & Ephemeral)</div>', unsafe_allow_html=True)
 
-history_records = []
+session_scans = st.session_state.get("session_scans", [])
 
-# 1. Try FastAPI backend via HTTP if local 8000 is open or remote backend URL is provided
-use_http = False
-if BACKEND_URL and ("127.0.0.1:8000" in BACKEND_URL or "localhost:8000" in BACKEND_URL):
-    use_http = is_local_backend_active(8000)
-elif BACKEND_URL and not ("127.0.0.1" in BACKEND_URL or "localhost" in BACKEND_URL):
-    use_http = True
+col_hist_info, col_hist_act = st.columns([3, 1])
+with col_hist_info:
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:#1A1E1B;border:1px solid #262B27;color:var(--cyan);padding:4px 10px;border-radius:12px;">
+        SESSION #{st.session_state['session_token']}
+      </span>
+      <span style="font-size:12px;color:var(--muted);">
+        Scans are isolated to this browser window and will automatically wipe when this tab is closed.
+      </span>
+    </div>
+    """, unsafe_allow_html=True)
 
-if use_http:
-    try:
-        hist_res = requests.get(f"{BACKEND_URL}/history?limit=10", timeout=2)
-        if hist_res.status_code == 200:
-            history_records = hist_res.json()
-    except Exception:
-        history_records = []
+with col_hist_act:
+    if session_scans:
+        if st.button("🗑️ Clear Session", use_container_width=True):
+            st.session_state["session_scans"] = []
+            if "last_result" in st.session_state:
+                del st.session_state["last_result"]
+            st.rerun()
 
-# 2. Standalone fallback (Direct SQLite database access for Streamlit Cloud / Standalone mode)
-if not history_records:
-    try:
-        import sys
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        from backend.db import get_history
-        history_records = get_history(limit=10)
-    except Exception:
-        history_records = []
-
-# 3. Always merge active session scans with database records to ensure 100% visibility
-combined_records = []
-seen_entries = set()
-
-# Include recent in-memory session scans first
-for s in st.session_state.get("session_scans", []):
-    key = (s.get("filename", ""), str(s.get("created_at", ""))[:19])
-    if key not in seen_entries:
-        seen_entries.add(key)
-        combined_records.append(s)
-
-# Include persistent database records
-for r in history_records:
-    key = (r.get("filename", ""), str(r.get("created_at", ""))[:19])
-    if key not in seen_entries:
-        seen_entries.add(key)
-        combined_records.append(r)
-
-if combined_records:
-    with st.expander(f"Recent Scan Records ({len(combined_records)} scans)", expanded=True):
-        for h in combined_records:
+if session_scans:
+    with st.expander(f"Session Scan Records ({len(session_scans)} file{'s' if len(session_scans) > 1 else ''})", expanded=True):
+        for idx, h in enumerate(session_scans):
             v = h.get("verdict", "")
             col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
-            st.markdown(f"""
-            <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-              <div>
-                <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
-                  Duration: {h.get('duration_sec', 0):.1f}s · Created: {str(h.get('created_at', ''))[:19].replace('T', ' ')}
+            c_info, c_btn = st.columns([4, 1])
+            with c_info:
+                st.markdown(f"""
+                <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:10px 14px;margin-bottom:6px;">
+                  <div>
+                    <div style="font-weight:600;font-size:13px;">{h.get('filename')}</div>
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
+                      Duration: {h.get('duration_sec', 0):.1f}s · Scanned at {str(h.get('created_at', ''))[11:19]} UTC
+                    </div>
+                  </div>
+                  <div style="text-align:right;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{col_v};background:#1A1E1B;padding:3px 8px;border-radius:10px;">
+                      {v or 'Scanned'}
+                    </span>
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
+                      Fake Ratio: {h.get('fake_ratio', 0):.1f}%
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div style="text-align:right;">
-                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;">
-                  {v or 'Scanned'}
-                </span>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
-                  Fake Ratio: {h.get('fake_ratio', 0):.1f}%
-                </div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            with c_btn:
+                if st.button("Inspect ◈", key=f"reinspect_{idx}", use_container_width=True):
+                    st.session_state["last_result"] = h.get("result", {})
+                    st.session_state["analyzed_file_name"] = h.get("filename", "")
+                    st.rerun()
 else:
-    st.caption("No scan records yet. Upload and analyze an audio file above to see scan history.")
+    st.markdown("""
+    <div style="background:#131614;border:1px dashed #262B27;border-radius:10px;padding:24px;text-align:center;color:#8C958E;font-size:13px;">
+      No scans in this session yet. Upload and analyze an audio clip above — your scan history for this window will appear here.
+    </div>
+    """, unsafe_allow_html=True)
