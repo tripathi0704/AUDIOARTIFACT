@@ -6,6 +6,19 @@
 
 AudioArtifact is an advanced timeline-based forensic system for detecting and localizing synthetic speech segments in audio recordings. It leverages **Silero Voice Activity Detection (VAD)**, **50% overlapping sliding windows**, **Microsoft WavLM 768-dimensional deep acoustic embeddings**, **calibrated XGBoost continuous probability modeling**, and an **interactive Plotly + Streamlit visualization dashboard**.
 
+### 🌟 Enterprise Forensic Capabilities (v2.0 Extended):
+1. **◈ Single Audio Localizer**:
+   - **Segment-by-Segment Click-to-Play**: Instant audio player for each 2-second suspect window to hear synthetic glitches in isolation.
+   - **Cryptographic Chain-of-Custody**: SHA-256 and MD5 checksum verification.
+   - **Biological & Acoustic Artifacts**: High-frequency spectral rolloff (vocoder cutoff), zero-crossing rate, dynamic range, and vocal pitch inflection.
+   - **1-Click Forensic Audit Certificate**: Printable ISO-style HTML/PDF forensic report download.
+   - **Sensitivity Calibration**: Adjustable AI decision threshold (30%–75%).
+2. **🎙️ Live Mic Voice Test**: Real-time microphone audio recording and instant deepfake screening.
+3. **👥 Speaker Clone / Voiceprint Matcher**: WavLM 768-dim cosine similarity cross-matching between a Reference Voice and a Suspect Audio to detect impersonation and voice cloning attacks.
+4. **📁 Batch Forensic Scanner**: Multi-file bulk processing, progress tracking, and CSV audit export.
+5. **📜 Session History & Audit Log**: Searchable, filterable scan records with 1-click re-inspection and CSV logs.
+
+
 ---
 
 ## 🌐 Live Web App (Direct Access)

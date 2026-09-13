@@ -42,12 +42,21 @@ import numpy as np
 import torch
 from transformers import AutoFeatureExtractor, AutoModel
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # allow importing local modules
 sys.path.append(os.path.dirname(__file__))
 from db import init_db, save_result, get_history  # noqa: E402
 from vad_utils import filter_speech_vad  # noqa: E402
+from forensic_utils import (  # noqa: E402
+    compute_file_hashes,
+    compute_acoustic_forensics,
+    compute_speaker_similarity,
+    generate_forensic_html_report,
+    slice_segment_audio_bytes,
+)
+
 
 # ---------------- CONFIG ----------------
 WAVLM_MODEL_ID = "microsoft/wavlm-base-plus"
@@ -150,18 +159,13 @@ def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = 
     return segments
 
 
-def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") -> dict:
+def decode_audio_bytes(content: bytes, original_filename: str = "upload.wav"):
     """
-    High-performance forensic analysis engine with in-memory audio decoding
-    and vectorized batch inference for maximum throughput.
+    Decodes audio bytes to 16kHz mono float32 array.
+    Uses in-memory soundfile decoding for WAV/OGG/FLAC, falls back to tempfile + librosa for MP3/M4A.
     """
-    clf = get_model()
-    if clf is None:
-        return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
-
     y = None
-    sr = SAMPLE_RATE
-    # 1. Fast in-memory audio decoding (avoids disk tempfiles for WAV/FLAC/OGG)
+    # 1. Fast in-memory audio decoding
     try:
         import io
         import soundfile as sf
@@ -184,18 +188,36 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
             tmp_path = tmp.name
 
         try:
-            y, sr = librosa.load(tmp_path, sr=SAMPLE_RATE, mono=True)
+            y, _ = librosa.load(tmp_path, sr=SAMPLE_RATE, mono=True)
         except Exception as e:
-            return {"error": f"Failed to decode audio file: {e}"}
+            return None, SAMPLE_RATE, f"Failed to decode audio file: {e}"
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
     if y is None or len(y) == 0:
-        return {"error": "Failed to decode audio file. Please ensure it is a valid .wav or .mp3 file."}
+        return None, SAMPLE_RATE, "Failed to decode audio file. Please ensure it is a valid .wav or .mp3 file."
+
+    return y, SAMPLE_RATE, None
+
+
+def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") -> dict:
+    """
+    High-performance forensic analysis engine with in-memory audio decoding
+    and vectorized batch inference for maximum throughput.
+    """
+    clf = get_model()
+    if clf is None:
+        return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
+
+    # 1. Decode audio bytes
+    y, sr_int, err = decode_audio_bytes(content, original_filename)
+    if err:
+        return {"error": err}
 
     raw_duration = round(len(y) / SAMPLE_RATE, 2)
-    sr_int: int = int(SAMPLE_RATE)
+    file_hashes = compute_file_hashes(content)
+    forensic_signals = compute_acoustic_forensics(y, sr_int)
 
     # 2. Voice Activity Detection (silence removal)
     y_speech, speech_intervals = filter_speech_vad(y, sr_int)
@@ -204,6 +226,7 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         y_speech = y
 
     # 3. Overlapping sliding window (2s window, 1s stride)
+
     segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
 
     if not segments:
@@ -309,6 +332,8 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         "highest_risk_segment": highest_risk,
         "segments": results,
         "spectrogram": spec_dict,
+        "file_hashes": file_hashes,
+        "forensic_signals": forensic_signals,
     }
 
     # 5. Persist run to SQLite history
@@ -320,10 +345,83 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
     return response
 
 
+def extract_speaker_embedding_vector(content: bytes, original_filename: str = "upload.wav"):
+    """
+    Extracts mean-pooled 768-dimensional WavLM speaker representation from speech segments.
+    Used for cross-audio voiceprint matching and deepfake clone verification.
+    """
+    y, sr_int, err = decode_audio_bytes(content, original_filename)
+    if err:
+        return None, err
+    if y is None or len(y) == 0:
+        return None, "Empty audio buffer."
+
+    # Voice Activity Detection (silence removal)
+    y_speech, _ = filter_speech_vad(y, sr_int)
+    if len(y_speech) < int(SAMPLE_RATE * 1.0):
+        y_speech = y
+
+    segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+    if not segments:
+        return None, "Audio is too short for speaker voiceprint extraction (minimum 2 seconds required)."
+
+    extractor, wavlm_model = get_wavlm()
+    if extractor is None or wavlm_model is None:
+        return None, "WavLM model not loaded."
+
+    seg_waves = [seg for _, _, seg in segments]
+    with torch.inference_mode():
+        if len(seg_waves) <= 16:
+            inputs = extractor(seg_waves, sampling_rate=sr_int, return_tensors="pt", padding=True)
+            out = wavlm_model(**inputs)
+            feats = out.last_hidden_state.mean(dim=1).cpu().numpy()
+        else:
+            feat_chunks = []
+            for b_idx in range(0, len(seg_waves), 16):
+                chunk = seg_waves[b_idx:b_idx + 16]
+                inputs = extractor(chunk, sampling_rate=sr_int, return_tensors="pt", padding=True)
+                out = wavlm_model(**inputs)
+                feat_chunks.append(out.last_hidden_state.mean(dim=1).cpu().numpy())
+            feats = np.vstack(feat_chunks)
+
+    mean_emb = np.mean(feats, axis=0)
+    return mean_emb, None
+
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
     content = await file.read()
     return analyze_audio_data(content, file.filename or "upload.wav")
+
+
+@app.post("/compare_speakers")
+async def compare_speakers(file_ref: UploadFile = File(...), file_suspect: UploadFile = File(...)):
+    """
+    Compares two speaker recordings via WavLM 768-dim embeddings.
+    Returns cosine similarity, distance, and clone matching assessment.
+    """
+    content_ref = await file_ref.read()
+    content_suspect = await file_suspect.read()
+
+    emb_ref, err_ref = extract_speaker_embedding_vector(content_ref, file_ref.filename or "reference.wav")
+    if err_ref:
+        return {"error": f"Reference audio error: {err_ref}"}
+
+    emb_suspect, err_suspect = extract_speaker_embedding_vector(content_suspect, file_suspect.filename or "suspect.wav")
+    if err_suspect:
+        return {"error": f"Suspect audio error: {err_suspect}"}
+
+    sim_result = compute_speaker_similarity(emb_ref, emb_suspect)
+    sim_result["reference_filename"] = file_ref.filename or "reference.wav"
+    sim_result["suspect_filename"] = file_suspect.filename or "suspect.wav"
+    return sim_result
+
+
+@app.post("/export_report", response_class=HTMLResponse)
+async def export_report(payload: dict):
+    """Generates and returns a standalone, printable HTML forensic audit certificate."""
+    html = generate_forensic_html_report(payload)
+    return HTMLResponse(content=html, status_code=200)
 
 
 @app.get("/history")
@@ -340,3 +438,4 @@ def root():
         "window_sec": WINDOW_SEC,
         "stride_sec": STRIDE_SEC,
     }
+

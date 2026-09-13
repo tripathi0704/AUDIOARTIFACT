@@ -1,15 +1,17 @@
 """
-app.py — AudioArtifact v2.0 Forensic Dashboard
-------------------------------------------------
-Timeline-Based Deepfake Audio Localizer Interface.
+app.py — AudioArtifact v2.0 Enterprise Forensic Dashboard
+---------------------------------------------------------
+Comprehensive Timeline-Based Deepfake Audio Localizer & Forensic Suite.
+
 Features:
-- Drag-and-drop audio uploader (.wav / .mp3)
-- Instant playback & analysis trigger
-- Forensic Verdict Card (Fake ratio %, Highest risk segment, Average confidence)
-- Plotly Continuous Deepfake Probability Curve across time with 50% risk threshold
-- Interactive Forensic Segment Explorer (Click-to-inspect timestamps & risks)
-- 3D Voice Signature Spectrogram (Mel-frequency topography)
-- SQLite Scan History Inspector
+- Tab 1: Single Audio Forensic Localizer (Verdict Cards, Probability Timeline,
+         3D Voice Signature Spectrogram, Segment-by-Segment Click-to-Play Audio Slicer,
+         Cryptographic SHA-256 Hash Audit, Biological & Acoustic Artifacts,
+         Adaptive Sensitivity Threshold Slider, 1-Click Forensic HTML Report Download)
+- Tab 2: Live Microphone Voice Test (Real-time browser mic recording & instant analysis)
+- Tab 3: Speaker Clone & Voiceprint Matcher (Reference vs Suspect WavLM 768-dim cross-matching)
+- Tab 4: Batch Forensic Scanner (Multi-file bulk upload, progress tracking, CSV export)
+- Tab 5: Session History & Audit Log (Search, verdict filters, CSV export, one-click re-inspection)
 """
 
 import os
@@ -19,6 +21,7 @@ import io
 import json
 import uuid
 import requests
+import pandas as pd
 
 # Windows 11 Smart App Control & cross-platform safe numba bypass for librosa
 try:
@@ -38,14 +41,34 @@ except Exception:
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 import librosa
+
+# Support importing local backend modules
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+backend_dir = os.path.join(project_root, "backend")
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+from backend.main import (
+    analyze_audio_data,
+    extract_speaker_embedding_vector,
+    decode_audio_bytes,
+)
+from backend.forensic_utils import (
+    compute_speaker_similarity,
+    generate_forensic_html_report,
+    slice_segment_audio_bytes,
+    compute_file_hashes,
+    compute_acoustic_forensics,
+)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 
 def is_local_backend_active(port: int = 8000) -> bool:
-    """Non-blocking 0.05s check to see if local uvicorn is actually listening."""
+    """Non-blocking check to see if local uvicorn is listening on port 8000."""
     import socket
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -57,37 +80,32 @@ def is_local_backend_active(port: int = 8000) -> bool:
         return False
 
 
-@st.cache_resource(show_spinner="Initializing forensic detection engine (downloading foundation model on cloud)...")
+@st.cache_resource(show_spinner="Initializing forensic foundation models...")
 def preload_cloud_models():
-    """Download and cache foundation models into Streamlit Cloud memory on startup."""
-    import sys
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    """Cache foundation models in memory on startup."""
     from backend.main import get_model, get_wavlm
     get_model()
     return get_wavlm()
 
 
-# If local FastAPI backend on port 8000 is NOT active (e.g. running standalone on Streamlit Community Cloud),
-# preload and cache the model once on cloud boot so user scans never fail!
+# If local backend on port 8000 is not active, preload models once in Streamlit process
 if not is_local_backend_active(8000):
     preload_cloud_models()
 
 st.set_page_config(
-    page_title="AudioArtifact v2.0 — Deepfake Audio Localizer",
+    page_title="AudioArtifact v2.0 — Forensic Audio Suite",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ----------------------------------------------------------------------
-# EPHEMERAL SESSION INITIALIZATION (ISOLATED PER BROWSER WINDOW)
-# ----------------------------------------------------------------------
+# Ephemeral session initialization
 if "session_token" not in st.session_state:
     st.session_state["session_token"] = uuid.uuid4().hex[:6].upper()
 if "session_scans" not in st.session_state:
     st.session_state["session_scans"] = []
+if "batch_results" not in st.session_state:
+    st.session_state["batch_results"] = []
 
 # ----------------------------------------------------------------------
 # GLOBAL DARK THEME STYLING
@@ -123,9 +141,9 @@ st.markdown("""
 }
 
 .block-container {
-  padding-top: 2rem;
+  padding-top: 1.8rem;
   padding-bottom: 3rem;
-  max-width: 1120px;
+  max-width: 1140px;
 }
 
 html, body, [class*="css"] {
@@ -137,13 +155,13 @@ html, body, [class*="css"] {
   font-family: 'IBM Plex Mono', monospace;
 }
 
-/* Brand Header */
+/* Brand Navigation Header */
 .brand-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -196,9 +214,9 @@ html, body, [class*="css"] {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 800;
   letter-spacing: -0.02em;
-  font-size: clamp(30px, 4.2vw, 46px);
+  font-size: clamp(28px, 3.8vw, 42px);
   line-height: 1.15;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .hero-title span.fake { color: var(--fake); }
@@ -206,10 +224,38 @@ html, body, [class*="css"] {
 
 .hero-sub {
   color: var(--muted);
-  font-size: 15.5px;
-  max-width: 680px;
-  margin-bottom: 28px;
+  font-size: 14.5px;
+  max-width: 720px;
+  margin-bottom: 22px;
   line-height: 1.6;
+}
+
+/* Tabs Restyling */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 8px;
+  background-color: var(--panel);
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  margin-bottom: 24px;
+}
+
+.stTabs [data-baseweb="tab"] {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 8px 16px;
+  border: none !important;
+  background-color: transparent !important;
+}
+
+.stTabs [aria-selected="true"] {
+  background-color: var(--panel-2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 /* File Uploader Restyle */
@@ -255,7 +301,7 @@ div.stButton > button:hover {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--amber);
-  margin: 32px 0 14px;
+  margin: 28px 0 12px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -263,7 +309,7 @@ div.stButton > button:hover {
 
 .section-label::before {
   content: '';
-  width: 20px;
+  width: 18px;
   height: 1px;
   background: var(--amber);
 }
@@ -273,20 +319,20 @@ div.stButton > button:hover {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .vcard {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 20px;
+  padding: 18px 20px;
   transition: border-color 0.2s;
 }
 
 .vcard .k {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--muted-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -309,10 +355,10 @@ div.stButton > button:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 7px 14px;
   border-radius: 20px;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
@@ -333,392 +379,854 @@ div.stButton > button:hover {
   border: 1px solid rgba(255,180,84,0.35);
   color: var(--amber);
 }
+
+/* Cryptographic & Artifact Strip */
+.crypto-strip {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# HEADER & BRAND
+# BRAND HEADER
 # ----------------------------------------------------------------------
 st.markdown(f"""
 <div class="brand-nav">
-  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 SOTA</span></div>
+  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 Forensic Suite</span></div>
   <div style="display:flex;align-items:center;gap:8px;">
     <div class="status-badge" style="color:var(--cyan);border-color:rgba(94,234,212,0.3);">
       <i></i>SESSION #{st.session_state['session_token']}
     </div>
-    <div class="status-badge">Silero VAD · 50% Overlap · WavLM 768-dim</div>
+    <div class="status-badge">Neural Acoustic Engine · Continuous Temporal Localization</div>
   </div>
 </div>
-<h1 class="hero-title">Audio<span class="real">Artifact</span> — Timeline-Based <span class="fake">Deepfake</span> Audio Localizer</h1>
+<h1 class="hero-title">Audio<span class="real">Artifact</span> — Forensic <span class="fake">Deepfake</span> Audio Suite</h1>
 <p class="hero-sub">
-  Forensic-grade audio analysis utilizing Silero VAD, 50% overlapping windows (2s window, 1s stride),
-  and Microsoft WavLM 768-dimensional deep acoustic embeddings with continuous probability reporting.
+  Enterprise-grade audio forensic intelligence: continuous temporal localization,
+  acoustic bio-marker verification, speaker voiceprint cross-matching,
+  and cryptographic audit certification.
 </p>
+
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# FILE UPLOAD & ACTIONS
+# TOP NAVIGATION TABS & REDIRECTION CONTROLLER
 # ----------------------------------------------------------------------
-col_up, col_ctrl = st.columns([3, 1])
+TAB_TITLES = [
+    "◈ Single Audio Localizer",
+    "🎙️ Live Mic Voice Test",
+    "👥 Voiceprint Clone Matcher",
+    "📁 Batch Forensic Scanner",
+    "📜 Session History & Audit Log",
+]
 
-with col_up:
-    uploaded_file = st.file_uploader(
-        "Upload suspicious audio clip",
-        type=["mp3", "wav"],
-        label_visibility="collapsed"
-    )
 
-if uploaded_file is not None:
-    st.audio(uploaded_file)
-    btn_col, _ = st.columns([1, 4])
-    with btn_col:
-        analyze_clicked = st.button("◈ Run Forensic Analysis", type="primary", use_container_width=True)
-else:
-    analyze_clicked = False
+def reinspect_scan_callback(record_result: dict, record_filename: str, record_audio_bytes: bytes = None):
+    """Updates session state and redirects active tab to Single Audio Localizer."""
+    st.session_state["last_result"] = record_result
+    st.session_state["analyzed_file_name"] = record_filename
+    st.session_state["analyzed_audio_bytes"] = record_audio_bytes
+    st.session_state["main_tabs"] = TAB_TITLES[0]
+    st.session_state["redirect_tab"] = TAB_TITLES[0]
 
-# ----------------------------------------------------------------------
-# ANALYSIS EXECUTION
-# ----------------------------------------------------------------------
-if uploaded_file is not None and analyze_clicked:
-    with st.spinner("Processing audio: Running Silero VAD, 50% overlapping windowing & WavLM deep embedding inference..."):
-        uploaded_file.seek(0)
-        file_bytes = uploaded_file.getvalue()
-        data = None
 
-        # 1. Try FastAPI backend first ONLY if an external URL is given or local port 8000 is open
-        use_http = False
-        if BACKEND_URL and ("127.0.0.1:8000" in BACKEND_URL or "localhost:8000" in BACKEND_URL):
-            use_http = is_local_backend_active(8000)
-        elif BACKEND_URL and not ("127.0.0.1" in BACKEND_URL or "localhost" in BACKEND_URL):
-            use_http = True  # Custom remote backend
+if "redirect_tab" in st.session_state:
+    st.session_state["main_tabs"] = st.session_state.pop("redirect_tab")
+elif "main_tabs" not in st.session_state:
+    st.session_state["main_tabs"] = TAB_TITLES[0]
 
-        if use_http:
-            try:
-                files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
-                res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
-                if res.status_code == 200:
-                    data = res.json()
-                else:
-                    data = {"error": f"Backend API returned status {res.status_code}: {res.text}"}
-            except Exception as req_err:
-                data = None
+tab_single, tab_mic, tab_speaker, tab_batch, tab_history = st.tabs(
+    TAB_TITLES,
+    key="main_tabs",
+    on_change="rerun",
+)
 
-        # 2. Instantaneous standalone execution (0-delay for Streamlit Community Cloud)
-        if not data or "error" in data:
-            try:
-                import sys
-                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                if project_root not in sys.path:
-                    sys.path.insert(0, project_root)
-                from backend.main import analyze_audio_data
-                data = analyze_audio_data(file_bytes, uploaded_file.name)
-            except Exception as e:
-                import traceback
-                st.error(f"Forensic Analysis Error: {e}")
-                st.code(traceback.format_exc())
+
+def execute_forensic_scan(file_bytes: bytes, filename: str) -> dict:
+    """Executes forensic scan using FastAPI backend or direct in-memory fallback."""
+    data = None
+    use_http = False
+    if BACKEND_URL and ("127.0.0.1:8000" in BACKEND_URL or "localhost:8000" in BACKEND_URL):
+        use_http = is_local_backend_active(8000)
+    elif BACKEND_URL and not ("127.0.0.1" in BACKEND_URL or "localhost" in BACKEND_URL):
+        use_http = True
+
+    if use_http:
+        try:
+            files = {"file": (filename, file_bytes, "audio/wav")}
+            res = requests.post(f"{BACKEND_URL}/analyze", files=files, timeout=120)
+            if res.status_code == 200:
+                data = res.json()
+        except Exception:
+            data = None
+
+    if not data or "error" in data:
+        data = analyze_audio_data(file_bytes, filename)
+
+    return data
+
+
+# ======================================================================
+# TAB 1: SINGLE AUDIO FORENSIC LOCALIZER
+# ======================================================================
+with tab_single:
+    col_up, col_opts = st.columns([3, 1])
+
+    with col_up:
+        uploaded_file = st.file_uploader(
+            "Upload suspicious audio clip",
+            type=["mp3", "wav"],
+            label_visibility="collapsed",
+            key="single_file_uploader"
+        )
+
+    with col_opts:
+        with st.expander("⚙️ Detection Threshold", expanded=False):
+            threshold_val = st.slider(
+                "AI Decision Boundary",
+                min_value=30,
+                max_value=75,
+                value=50,
+                step=5,
+                help="Continuous probability percentage threshold above which a window is classified as AI Fake."
+            )
+
+    if uploaded_file is not None:
+        st.audio(uploaded_file)
+        btn_col, _ = st.columns([1, 3])
+        with btn_col:
+            analyze_clicked = st.button("◈ Run Forensic Analysis", type="primary", use_container_width=True, key="btn_analyze_single")
+    else:
+        analyze_clicked = False
+
+    if uploaded_file is not None and analyze_clicked:
+        with st.spinner("Processing audio: Executing multi-layered forensic inspection & neural acoustic verification..."):
+            uploaded_file.seek(0)
+            file_bytes = uploaded_file.getvalue()
+            data = execute_forensic_scan(file_bytes, uploaded_file.name)
+
+            if not data or "error" in data:
+                st.error(data.get("error", "Failed to process audio."))
                 st.stop()
 
-    if not data:
-        st.error("No analysis result returned. Please check the uploaded audio file format (.wav or .mp3 recommended).")
-        st.stop()
+            st.session_state["last_result"] = data
+            st.session_state["analyzed_file_name"] = uploaded_file.name
+            st.session_state["analyzed_audio_bytes"] = file_bytes
 
-    if "error" in data:
-        st.error(data["error"])
-        st.stop()
+            # Save to session scan history using local system time
+            from datetime import datetime
+            created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            st.session_state["session_scans"].insert(0, {
+                "filename": uploaded_file.name,
+                "duration_sec": data.get("total_duration", 0.0),
+                "fake_ratio": data.get("fake_ratio", 0.0),
+                "verdict": data.get("verdict", ""),
+                "created_at": created_ts,
+                "result": data,
+                "audio_bytes": file_bytes,
+            })
 
-    st.session_state["last_result"] = data
-    st.session_state["analyzed_file_name"] = uploaded_file.name
 
-    # Explicitly ensure result is saved into SQLite history.db
-    try:
-        import sys
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        from backend.db import save_result
-        save_result(uploaded_file.name, data)
-    except Exception:
-        pass
+    # Render Forensic Report if results available
+    if "last_result" in st.session_state:
+        data = st.session_state["last_result"]
+        segments = data.get("segments", [])
+        total_dur = data.get("total_duration", 0.0)
+        fake_ratio = data.get("fake_ratio", 0.0)
+        verdict = data.get("verdict", "")
+        highest = data.get("highest_risk_segment", {})
+        avg_conf = round(sum(s.get("confidence", 0) for s in segments) / max(len(segments), 1), 1)
+        hashes = data.get("file_hashes", {})
+        forensics = data.get("forensic_signals", {})
+        audio_bytes = st.session_state.get("analyzed_audio_bytes", None)
 
-    # Maintain session scan history for instant retrieval across sessions / cloud hosting
-    if "session_scans" not in st.session_state:
-        st.session_state["session_scans"] = []
-    from datetime import datetime, timezone
-    created_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    st.session_state["session_scans"].insert(0, {
-        "filename": uploaded_file.name,
-        "duration_sec": data.get("total_duration", 0.0),
-        "fake_ratio": data.get("fake_ratio", 0.0),
-        "verdict": data.get("verdict", ""),
-        "created_at": created_ts,
-        "result": data
-    })
-
-# ----------------------------------------------------------------------
-# RENDER FORENSIC REPORT
-# ----------------------------------------------------------------------
-if "last_result" in st.session_state:
-    data = st.session_state["last_result"]
-    segments = data["segments"]
-    total_dur = data.get("total_duration", 0.0)
-    fake_ratio = data.get("fake_ratio", 0.0)
-    verdict = data.get("verdict", "")
-    highest = data.get("highest_risk_segment", {})
-    avg_conf = round(sum(s["confidence"] for s in segments) / max(len(segments), 1), 1)
-
-    # Verdict Pill Style
-    if fake_ratio == 0:
-        pill_class = "real"
-        pill_text = f"✓ {verdict}"
-    elif fake_ratio >= 80:
-        pill_class = "fake"
-        pill_text = f"⚠ {verdict}"
-    else:
-        pill_class = "mixed"
-        pill_text = f"⚡ {verdict}"
-
-    st.markdown('<div class="section-label">Forensic Summary</div>', unsafe_allow_html=True)
-
-    # Top Status & Metrics Grid
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f"""
-        <div class="vcard">
-          <div class="k">Overall Verdict</div>
-          <div style="margin-top:6px;"><span class="pill-status {pill_class}">{pill_text}</span></div>
-          <div class="sub">File: {data.get("filename", "")}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class="vcard">
-          <div class="k">Synthetic Audio Ratio</div>
-          <div class="v" style="color:{'#FF5C5C' if fake_ratio > 40 else '#3ECF8E'}">{fake_ratio}%</div>
-          <div class="sub">{data.get("fake_seconds", 0)}s of {total_dur}s flagged</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c3:
-        peak_prob = round(highest.get("fake_probability", 0.0) * 100, 1)
-        st.markdown(f"""
-        <div class="vcard">
-          <div class="k">Peak Risk Segment</div>
-          <div class="v" style="color:{'#FF5C5C' if peak_prob >= 50 else '#3ECF8E'}">{peak_prob}% AI</div>
-          <div class="sub">Timestamp: {highest.get('start', 0)}s – {highest.get('end', 0)}s</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c4:
-        st.markdown(f"""
-        <div class="vcard">
-          <div class="k">Model Confidence</div>
-          <div class="v" style="color:var(--cyan);">{avg_conf}%</div>
-          <div class="sub">{len(segments)} overlapping windows</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ------------------------------------------------------------------
-    # CONTINUOUS PROBABILITY TIMELINE (PLOTLY)
-    # ------------------------------------------------------------------
-    st.markdown('<div class="section-label">Continuous Deepfake Probability Curve (Timeline)</div>', unsafe_allow_html=True)
-
-    time_points = [round((s["start"] + s["end"]) / 2, 2) for s in segments]
-    fake_probs = [round(s["fake_probability"] * 100, 2) for s in segments]
-    confidences = [s["confidence"] for s in segments]
-    hover_texts = [
-        f"<b>Window {s['segment']+1}</b><br>"
-        f"Interval: {s['start']}s – {s['end']}s<br>"
-        f"AI Probability: {s['fake_probability']*100:.1f}%<br>"
-        f"Classification: <b>{s['label']}</b> (Confidence: {s['confidence']}%)"
-        for s in segments
-    ]
-
-    fig = go.Figure()
-
-    # 50% Threshold Area
-    fig.add_shape(
-        type="rect",
-        x0=0, x1=total_dur,
-        y0=50, y1=100,
-        fillcolor="rgba(255, 92, 92, 0.05)",
-        line=dict(width=0),
-        layer="below"
-    )
-
-    # 50% Threshold Line
-    fig.add_trace(go.Scatter(
-        x=[0, total_dur],
-        y=[50, 50],
-        mode="lines",
-        line=dict(color="rgba(255, 180, 84, 0.7)", width=1.5, dash="dash"),
-        name="AI Decision Boundary (50%)",
-        hoverinfo="skip"
-    ))
-
-    # Continuous Probability Line
-    fig.add_trace(go.Scatter(
-        x=time_points,
-        y=fake_probs,
-        mode="lines+markers",
-        name="Deepfake Probability",
-        line=dict(color="#3ECF8E", width=3, shape="spline"),
-        marker=dict(
-            size=7,
-            color=["#FF5C5C" if p >= 50 else "#3ECF8E" for p in fake_probs],
-            line=dict(color="#0A0C0B", width=1.5)
-        ),
-        hovertext=hover_texts,
-        hoverinfo="text"
-    ))
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#131614",
-        height=320,
-        margin=dict(l=40, r=20, t=20, b=40),
-        xaxis=dict(
-            title=dict(text="Timeline (Seconds)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
-            tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
-            gridcolor="#262B27",
-            zeroline=False,
-            range=[0, total_dur]
-        ),
-        yaxis=dict(
-            title=dict(text="AI Voice Probability (%)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
-            tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
-            gridcolor="#262B27",
-            range=[-2, 105],
-            zeroline=False
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            font=dict(family="IBM Plex Mono", size=11, color="#8C958E")
-        ),
-        hovermode="closest"
-    )
-
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-    # ------------------------------------------------------------------
-    # SEGMENT-BY-SEGMENT FORENSIC EXPLORER
-    # ------------------------------------------------------------------
-    st.markdown('<div class="section-label">Overlapping Window Breakdown</div>', unsafe_allow_html=True)
-
-    with st.expander(f"Inspect all {len(segments)} windows (2.0s window / 1.0s stride)", expanded=False):
-        seg_cols = st.columns(4)
-        for idx, s in enumerate(segments):
-            with seg_cols[idx % 4]:
-                is_fake = s["label_code"] == 1
-                color = "#FF5C5C" if is_fake else "#3ECF8E"
+        # Inspected record banner and playback if navigating from History / other tabs
+        if uploaded_file is None:
+            c_inf1, c_inf2, c_clr = st.columns([3, 2, 1])
+            with c_inf1:
+                disp_fname = st.session_state.get("analyzed_file_name", data.get("filename", "Audio File"))
                 st.markdown(f"""
-                <div style="background:#1A1E1B;border:1px solid #262B27;border-left:3px solid {color};padding:10px 12px;border-radius:8px;margin-bottom:10px;">
-                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8C958E;">
-                    WINDOW {s['segment']+1} · {s['start']}s–{s['end']}s
-                  </div>
-                  <div style="font-weight:700;font-size:14px;color:{color};margin-top:2px;">
-                    {s['label']} ({s['fake_probability']*100:.1f}%)
-                  </div>
-                  <div style="font-size:11px;color:#5E6660;">Confidence: {s['confidence']}%</div>
+                <div style="background:#131614;border:1px solid #262B27;border-left:4px solid var(--cyan);padding:10px 16px;border-radius:8px;margin-bottom:12px;">
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8C958E;letter-spacing:0.04em;">INSPECTING RECORD FROM SESSION</div>
+                  <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px;">📁 {disp_fname}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with c_inf2:
+                if audio_bytes:
+                    st.audio(audio_bytes, format="audio/wav")
+            with c_clr:
+                st.write("")
+                if st.button("✕ Clear View", key="btn_clear_inspected_view", use_container_width=True):
+                    if "last_result" in st.session_state:
+                        del st.session_state["last_result"]
+                    if "analyzed_file_name" in st.session_state:
+                        del st.session_state["analyzed_file_name"]
+                    if "analyzed_audio_bytes" in st.session_state:
+                        del st.session_state["analyzed_audio_bytes"]
+                    st.rerun()
+
+        # Verdict Pill Style
+        if fake_ratio <= 15:
+            pill_class = "real"
+            pill_text = f"✓ {verdict}"
+        elif fake_ratio >= 75:
+            pill_class = "fake"
+            pill_text = f"⚠ {verdict}"
+        else:
+            pill_class = "mixed"
+            pill_text = f"⚡ {verdict}"
+
+        st.markdown('<div class="section-label">Forensic Summary & Cryptographic Proof</div>', unsafe_allow_html=True)
+
+        # Top Status & Metrics Grid
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(f"""
+            <div class="vcard">
+              <div class="k">Overall Verdict</div>
+              <div style="margin-top:6px;"><span class="pill-status {pill_class}">{pill_text}</span></div>
+              <div class="sub">Target: {data.get("filename", "")}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"""
+            <div class="vcard">
+              <div class="k">Synthetic Audio Ratio</div>
+              <div class="v" style="color:{'#FF5C5C' if fake_ratio > 40 else '#3ECF8E'}">{fake_ratio}%</div>
+              <div class="sub">{data.get("fake_seconds", 0)}s of {total_dur}s flagged</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c3:
+            peak_prob = round(highest.get("fake_probability", 0.0) * 100, 1)
+            st.markdown(f"""
+            <div class="vcard">
+              <div class="k">Peak Risk Segment</div>
+              <div class="v" style="color:{'#FF5C5C' if peak_prob >= 50 else '#3ECF8E'}">{peak_prob}% AI</div>
+              <div class="sub">Interval: {highest.get('start', 0)}s – {highest.get('end', 0)}s</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c4:
+            st.markdown(f"""
+            <div class="vcard">
+              <div class="k">Model Confidence</div>
+              <div class="v" style="color:var(--cyan);">{avg_conf}%</div>
+              <div class="sub">{len(segments)} temporal speech frames</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+        # Cryptographic Signatures & Download Action
+        col_crypto, col_dl = st.columns([3, 1])
+        with col_crypto:
+            st.markdown(f"""
+            <div class="crypto-strip">
+              <div><b>SHA-256:</b> <span style="color:var(--cyan);">{hashes.get('sha256', 'N/A')}</span></div>
+              <div style="color:var(--muted);"><b>Size:</b> {hashes.get('size_kb', 0)} KB · <b>Sampling:</b> 16,000 Hz Standardized</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_dl:
+            report_html = generate_forensic_html_report(data)
+            st.download_button(
+                label="📥 Download Audit Report",
+                data=report_html,
+                file_name=f"Forensic_Report_{data.get('filename', 'scan')}.html",
+                mime="text/html",
+                use_container_width=True,
+                help="Download an ISO-compliant, self-contained printable HTML/PDF forensic audit certificate."
+            )
+
+        # Biological & Acoustic Artifact Findings
+        if forensics:
+            st.markdown('<div class="section-label">Biological & Acoustic Artifact Findings</div>', unsafe_allow_html=True)
+            a1, a2, a3, a4 = st.columns(4)
+            with a1:
+                st.markdown(f"""
+                <div class="vcard">
+                  <div class="k">Spectral Rolloff (85%)</div>
+                  <div class="v">{forensics.get('spectral_rolloff_85_hz', 0)} Hz</div>
+                  <div class="sub">Centroid: {forensics.get('spectral_centroid_hz', 0)} Hz</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with a2:
+                st.markdown(f"""
+                <div class="vcard">
+                  <div class="k">Zero-Crossing Rate (ZCR)</div>
+                  <div class="v">{forensics.get('zero_crossing_rate', 0)}</div>
+                  <div class="sub">Silence / Noise Boundary</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with a3:
+                st.markdown(f"""
+                <div class="vcard">
+                  <div class="k">Dynamic Range</div>
+                  <div class="v">{forensics.get('dynamic_range_db', 0)} dB</div>
+                  <div class="sub">Crest Factor: {forensics.get('crest_factor', 0)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with a4:
+                st.markdown(f"""
+                <div class="vcard">
+                  <div class="k">Pitch Inflection Score</div>
+                  <div class="v" style="color:var(--amber);">{forensics.get('pitch_inflection_score', 0)}%</div>
+                  <div class="sub">Mean F0: {forensics.get('pitch_mean_hz', 0)} Hz</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ------------------------------------------------------------------
-    # 3D VOICE SIGNATURE SPECTROGRAM
-    # ------------------------------------------------------------------
-    st.markdown('<div class="section-label">Voice Signature Spectrogram</div>', unsafe_allow_html=True)
+        # Continuous Probability Timeline (Plotly)
+        st.markdown('<div class="section-label">Continuous Deepfake Probability Curve (Timeline)</div>', unsafe_allow_html=True)
 
-    spec_data = data.get("spectrogram", {})
-    if "z" in spec_data and spec_data["z"]:
-        z = np.array(spec_data["z"])
-        x = np.array(spec_data.get("time", list(range(z.shape[1]))))
-        y = np.array(spec_data.get("mel", list(range(z.shape[0]))))
+        time_points = [round((s["start"] + s["end"]) / 2, 2) for s in segments]
+        fake_probs = [round(s["fake_probability"] * 100, 2) for s in segments]
+        hover_texts = [
+            f"<b>Window {s.get('segment', idx) + 1}</b><br>"
+            f"Interval: {s.get('start', 0)}s – {s.get('end', 0)}s<br>"
+            f"AI Probability: {s.get('fake_probability', 0)*100:.1f}%<br>"
+            f"Classification: <b>{s.get('label', 'N/A')}</b> (Confidence: {s.get('confidence', 0)}%)"
+            for idx, s in enumerate(segments)
+        ]
 
-        fig3d = go.Figure(data=[go.Surface(
-            z=z, x=x, y=y,
-            colorscale=[
-                [0, "#0A0C0B"],
-                [0.35, "#132E22"],
-                [0.7, "#1F6B4C"],
-                [1.0, "#3ECF8E"]
-            ],
-            showscale=False
-        )])
-        fig3d.update_layout(
-            scene=dict(
-                xaxis=dict(title="", showbackground=False, color="#5E6660"),
-                yaxis=dict(title="", showbackground=False, color="#5E6660"),
-                zaxis=dict(title="", showbackground=False, color="#5E6660"),
-                bgcolor="rgba(0,0,0,0)",
-            ),
-            paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=0, r=0, t=10, b=0),
-            height=380,
+        fig = go.Figure()
+        threshold_pct = threshold_val if "threshold_val" in locals() else 50
+
+        # Shaded AI Region above threshold
+        fig.add_shape(
+            type="rect",
+            x0=0, x1=total_dur,
+            y0=threshold_pct, y1=100,
+            fillcolor="rgba(255, 92, 92, 0.05)",
+            line=dict(width=0),
+            layer="below"
         )
-        st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
 
-# ----------------------------------------------------------------------
-# ACTIVE SESSION SCAN HISTORY (ISOLATED TO CURRENT BROWSER WINDOW)
-# ----------------------------------------------------------------------
-st.markdown('<div class="section-label">Active Session History (Private & Ephemeral)</div>', unsafe_allow_html=True)
+        # Threshold Line
+        fig.add_trace(go.Scatter(
+            x=[0, total_dur],
+            y=[threshold_pct, threshold_pct],
+            mode="lines",
+            line=dict(color="rgba(255, 180, 84, 0.7)", width=1.5, dash="dash"),
+            name=f"Decision Boundary ({threshold_pct}%)",
+            hoverinfo="skip"
+        ))
 
-session_scans = st.session_state.get("session_scans", [])
+        # Continuous Probability Curve
+        fig.add_trace(go.Scatter(
+            x=time_points,
+            y=fake_probs,
+            mode="lines+markers",
+            name="Deepfake Probability",
+            line=dict(color="#3ECF8E", width=3, shape="spline"),
+            marker=dict(
+                size=7,
+                color=["#FF5C5C" if p >= threshold_pct else "#3ECF8E" for p in fake_probs],
+                line=dict(color="#0A0C0B", width=1.5)
+            ),
+            hovertext=hover_texts,
+            hoverinfo="text"
+        ))
 
-col_hist_info, col_hist_act = st.columns([3, 1])
-with col_hist_info:
-    st.markdown(f"""
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:#1A1E1B;border:1px solid #262B27;color:var(--cyan);padding:4px 10px;border-radius:12px;">
-        SESSION #{st.session_state['session_token']}
-      </span>
-      <span style="font-size:12px;color:var(--muted);">
-        Scans are isolated to this browser window and will automatically wipe when this tab is closed.
-      </span>
-    </div>
-    """, unsafe_allow_html=True)
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#131614",
+            height=320,
+            margin=dict(l=40, r=20, t=20, b=40),
+            xaxis=dict(
+                title=dict(text="Timeline (Seconds)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
+                tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
+                gridcolor="#262B27",
+                zeroline=False,
+                range=[0, total_dur]
+            ),
+            yaxis=dict(
+                title=dict(text="AI Voice Probability (%)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
+                tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
+                gridcolor="#262B27",
+                range=[-2, 105],
+                zeroline=False
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                font=dict(family="IBM Plex Mono", size=11, color="#8C958E")
+            ),
+            hovermode="closest"
+        )
 
-with col_hist_act:
-    if session_scans:
-        if st.button("🗑️ Clear Session", use_container_width=True):
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+        # Segment-by-Segment Forensic Explorer with Click-to-Play Audio Slicer
+        st.markdown('<div class="section-label">Temporal Speech Frame Breakdown & Instant Audio Slicer</div>', unsafe_allow_html=True)
+
+        # Pre-decode audio if audio bytes available for instant slicing
+        decoded_y = None
+        if audio_bytes:
+            try:
+                decoded_y, _, _ = decode_audio_bytes(audio_bytes)
+            except Exception:
+                decoded_y = None
+
+        with st.expander(f"Inspect all {len(segments)} Temporal Speech Frames", expanded=False):
+            seg_cols = st.columns(3)
+            for idx, s in enumerate(segments):
+                with seg_cols[idx % 3]:
+                    is_fake = s["fake_probability"] * 100 >= threshold_pct
+                    color = "#FF5C5C" if is_fake else "#3ECF8E"
+                    st.markdown(f"""
+                    <div style="background:#1A1E1B;border:1px solid #262B27;border-left:3px solid {color};padding:10px 12px;border-radius:8px;margin-bottom:8px;">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8C958E;">
+                        FRAME #{s.get('segment', idx) + 1} · {s.get('start', 0)}s–{s.get('end', 0)}s
+                      </div>
+
+                      <div style="font-weight:700;font-size:14px;color:{color};margin-top:2px;">
+                        {'AI Fake' if is_fake else 'Human'} ({s['fake_probability']*100:.1f}%)
+                      </div>
+                      <div style="font-size:11px;color:#5E6660;">Confidence: {s['confidence']}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Click-to-Play Audio Slice
+                    if decoded_y is not None:
+                        try:
+                            seg_audio_bytes = slice_segment_audio_bytes(decoded_y, s['start'], s['end'], sr=16000)
+                            st.audio(seg_audio_bytes, format="audio/wav")
+                        except Exception:
+                            pass
+
+        # 3D Voice Signature Spectrogram
+        st.markdown('<div class="section-label">Voice Signature Spectrogram (3D Topography)</div>', unsafe_allow_html=True)
+        spec_data = data.get("spectrogram", {})
+        if "z" in spec_data and spec_data["z"]:
+            z = np.array(spec_data["z"])
+            x = np.array(spec_data.get("time", list(range(z.shape[1]))))
+            y_axis = np.array(spec_data.get("mel", list(range(z.shape[0]))))
+
+            fig3d = go.Figure(data=[go.Surface(
+                z=z, x=x, y=y_axis,
+                colorscale=[
+                    [0, "#0A0C0B"],
+                    [0.35, "#132E22"],
+                    [0.7, "#1F6B4C"],
+                    [1.0, "#3ECF8E"]
+                ],
+                showscale=False
+            )])
+            fig3d.update_layout(
+                scene=dict(
+                    xaxis=dict(title="", showbackground=False, color="#5E6660"),
+                    yaxis=dict(title="", showbackground=False, color="#5E6660"),
+                    zaxis=dict(title="", showbackground=False, color="#5E6660"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=380,
+            )
+            st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
+
+
+# ======================================================================
+# TAB 2: LIVE MICROPHONE VOICE TEST
+# ======================================================================
+with tab_mic:
+    st.markdown('<div class="section-label">Live Voice Authenticity Test</div>', unsafe_allow_html=True)
+    st.markdown("""
+    Test your real voice or a live played speaker sample directly using your microphone.
+    The system captures your recording, isolates active vocal frequency zones,
+    and screens for synthetic speech artifacts in real time.
+    """)
+
+    mic_audio = st.audio_input("Record speech via microphone", key="mic_recorder")
+
+    if mic_audio is not None:
+        st.audio(mic_audio)
+        if st.button("◈ Analyze Live Recording", type="primary", key="btn_analyze_mic"):
+            with st.spinner("Analyzing live microphone audio..."):
+                mic_bytes = mic_audio.getvalue()
+                data = execute_forensic_scan(mic_bytes, "live_microphone_recording.wav")
+
+                if not data or "error" in data:
+                    st.error(data.get("error", "Error processing microphone recording."))
+                else:
+                    st.session_state["last_result"] = data
+                    st.session_state["analyzed_file_name"] = "live_microphone_recording.wav"
+                    st.session_state["analyzed_audio_bytes"] = mic_bytes
+
+                    from datetime import datetime
+                    created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                    st.session_state["session_scans"].insert(0, {
+                        "filename": "live_microphone_recording.wav",
+                        "duration_sec": data.get("total_duration", 0.0),
+                        "fake_ratio": data.get("fake_ratio", 0.0),
+                        "verdict": data.get("verdict", ""),
+                        "created_at": created_ts,
+                        "result": data,
+                        "audio_bytes": mic_bytes,
+                    })
+
+                    st.success("✓ Live recording analyzed successfully! Switch to the 'Single Audio Localizer' tab to inspect the complete timeline.")
+                    st.button(
+                        "◈ Inspect Timeline in Single Localizer",
+                        key="btn_mic_goto_single",
+                        on_click=reinspect_scan_callback,
+                        args=(data, "live_microphone_recording.wav", mic_bytes),
+                        type="primary",
+                        use_container_width=True
+                    )
+                    # Quick Verdict Pill
+                    fake_ratio = data.get("fake_ratio", 0.0)
+                    verdict = data.get("verdict", "")
+                    col_v = "#3ECF8E" if fake_ratio <= 15 else "#FF5C5C" if fake_ratio >= 75 else "#FFB454"
+                    st.markdown(f"""
+                    <div style="background:#131614;border:1px solid #262B27;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;">LIVE MIC VERDICT</div>
+                      <div style="font-size:22px;font-weight:700;color:{col_v};margin:4px 0;">{verdict}</div>
+                      <div style="font-size:13px;color:#ECEFEB;">Synthetic Ratio: <b>{fake_ratio}%</b> · Analyzed Duration: <b>{data.get('total_duration', 0)}s</b></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
+# ======================================================================
+# TAB 3: SPEAKER CLONE / VOICEPRINT MATCHER
+# ======================================================================
+with tab_speaker:
+    st.markdown('<div class="section-label">Speaker Verification & Clone Impersonation Audit</div>', unsafe_allow_html=True)
+    st.markdown("""
+    Upload a **Reference Audio (Known Authentic Voice)** and a **Suspect Audio (Alleged Voice Clone or Recording)**.
+    The system extracts deep neural voiceprints to calculate **Speaker Voiceprint Acoustic Similarity**
+    and independently determines if the suspect clip contains synthetic voice cloning artifacts.
+    """)
+
+    col_ref, col_sus = st.columns(2)
+    with col_ref:
+        st.markdown("##### 1. Reference Audio (Known Genuine Voice)")
+        ref_file = st.file_uploader("Upload reference audio", type=["wav", "mp3"], key="ref_file_uploader")
+        if ref_file:
+            st.audio(ref_file)
+
+    with col_sus:
+        st.markdown("##### 2. Suspect Audio (Alleged Clone)")
+        sus_file = st.file_uploader("Upload suspect audio", type=["wav", "mp3"], key="sus_file_uploader")
+        if sus_file:
+            st.audio(sus_file)
+
+    if ref_file and sus_file:
+        if st.button("◈ Run Voiceprint Comparison & Clone Audit", type="primary", key="btn_compare_speakers"):
+            with st.spinner("Extracting neural voiceprints and analyzing acoustic concordance..."):
+
+                ref_bytes = ref_file.getvalue()
+                sus_bytes = sus_file.getvalue()
+
+                emb_ref, err_ref = extract_speaker_embedding_vector(ref_bytes, ref_file.name)
+                emb_sus, err_sus = extract_speaker_embedding_vector(sus_bytes, sus_file.name)
+
+                if err_ref:
+                    st.error(f"Reference Audio Error: {err_ref}")
+                elif err_sus:
+                    st.error(f"Suspect Audio Error: {err_sus}")
+                else:
+                    sim_data = compute_speaker_similarity(emb_ref, emb_sus)
+
+                    # Also analyze suspect audio for deepfake probability
+                    data_sus = execute_forensic_scan(sus_bytes, sus_file.name)
+                    sus_fake_ratio = data_sus.get("fake_ratio", 0.0) if data_sus else 0.0
+                    is_sus_ai = sus_fake_ratio >= 50.0
+
+                    sim_pct = sim_data.get("similarity_percentage", 0.0)
+                    cos_sim = sim_data.get("cosine_similarity", 0.0)
+
+                    # Determine Dual Verdict
+                    if sim_pct >= 82.0 and is_sus_ai:
+                        alert_title = "🚨 HIGH-RISK VOICE CLONE DETECTED"
+                        alert_desc = f"The suspect audio matches the vocal identity of the reference speaker ({sim_pct}% voiceprint match), but contains {sus_fake_ratio}% synthetic speech segments. High probability of AI voice cloning / impersonation attack."
+                        alert_color = "#FF5C5C"
+                    elif sim_pct >= 82.0 and not is_sus_ai:
+                        alert_title = "✓ AUTHENTIC SPEAKER MATCH"
+                        alert_desc = f"The suspect audio matches the reference speaker ({sim_pct}% voiceprint match) and is classified as authentic human voice ({sus_fake_ratio}% AI ratio)."
+                        alert_color = "#3ECF8E"
+                    elif sim_pct < 65.0:
+                        alert_title = "❌ DISTINCT SPEAKERS"
+                        alert_desc = f"The vocal tracts and acoustic resonances do not match ({sim_pct}% similarity). The recordings represent two completely different speakers."
+                        alert_color = "#8C958E"
+                    else:
+                        alert_title = "⚠️ AMBIGUOUS / PARTIAL SIMILARITY"
+                        alert_desc = f"Moderate acoustic overlap ({sim_pct}% match). Inconclusive identity match; check recording quality and background noise."
+                        alert_color = "#FFB454"
+
+                    st.markdown(f"""
+                    <div style="background:#131614;border:1px solid #262B27;border-left:5px solid {alert_color};padding:22px;border-radius:12px;margin:20px 0;">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{alert_color};font-weight:700;">{alert_title}</div>
+                      <div style="font-size:15px;color:#ECEFEB;margin-top:8px;line-height:1.6;">{alert_desc}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Metric Breakdown Cards
+                    m1, m2, m3 = st.columns(3)
+                    with m1:
+                        st.markdown(f"""
+                        <div class="vcard">
+                          <div class="k">Voiceprint Similarity</div>
+                          <div class="v" style="color:var(--cyan);">{sim_pct}%</div>
+                          <div class="sub">Cosine Score: {cos_sim}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with m2:
+                        st.markdown(f"""
+                        <div class="vcard">
+                          <div class="k">Suspect Synthetic Ratio</div>
+                          <div class="v" style="color:{'#FF5C5C' if sus_fake_ratio >= 50 else '#3ECF8E'};">{sus_fake_ratio}%</div>
+                          <div class="sub">Verdict: {data_sus.get('verdict', 'N/A')}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with m3:
+                        st.markdown(f"""
+                        <div class="vcard">
+                          <div class="k">Embedding Distance</div>
+                          <div class="v">{sim_data.get('euclidean_distance', 0)}</div>
+                          <div class="sub">Euclidean vector divergence</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    if data_sus:
+                        from datetime import datetime
+                        created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                        st.session_state["session_scans"].insert(0, {
+                            "filename": f"[Suspect] {sus_file.name}",
+                            "duration_sec": data_sus.get("total_duration", 0.0),
+                            "fake_ratio": sus_fake_ratio,
+                            "verdict": data_sus.get("verdict", ""),
+                            "created_at": created_ts,
+                            "result": data_sus,
+                            "audio_bytes": sus_bytes,
+                        })
+
+                        st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+                        c_spk_info, c_spk_btn = st.columns([3, 1])
+                        with c_spk_info:
+                            st.markdown(f"""
+                            <div style="background:#131614;border:1px solid #262B27;border-left:4px solid var(--cyan);padding:12px 16px;border-radius:8px;">
+                              <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8C958E;letter-spacing:0.04em;">DEEP FORENSIC TIMELINE</div>
+                              <div style="font-size:13.5px;color:#ECEFEB;margin-top:2px;">
+                                Inspect <b>{sus_file.name}</b> in Single Localizer to view temporal speech frames, probability curves, and 3D spectrogram.
+                              </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with c_spk_btn:
+                            st.write("")
+                            st.button(
+                                "Inspect Suspect ◈",
+                                key="btn_inspect_suspect_clone",
+                                type="primary",
+                                use_container_width=True,
+                                on_click=reinspect_scan_callback,
+                                args=(data_sus, sus_file.name, sus_bytes)
+                            )
+
+
+# ======================================================================
+# TAB 4: BATCH FORENSIC SCANNER
+# ======================================================================
+with tab_batch:
+    st.markdown('<div class="section-label">Batch Forensic Scanner</div>', unsafe_allow_html=True)
+    st.markdown("""
+    Upload multiple audio files at once to perform automated bulk deepfake screening.
+    Review comparative metrics, download aggregated CSV audit reports, and inspect individual files.
+    """)
+
+    batch_files = st.file_uploader(
+        "Upload multiple audio files",
+        type=["wav", "mp3"],
+        accept_multiple_files=True,
+        key="batch_uploader"
+    )
+
+    if batch_files:
+        st.write(f"Selected **{len(batch_files)}** audio files.")
+        if st.button(f"◈ Run Bulk Forensic Scan ({len(batch_files)} files)", type="primary", key="btn_run_batch"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            batch_list = []
+
+            for i, f in enumerate(batch_files):
+                status_text.text(f"Scanning [{i+1}/{len(batch_files)}]: {f.name}...")
+                f.seek(0)
+                content = f.getvalue()
+                res = execute_forensic_scan(content, f.name)
+
+                if res and "error" not in res:
+                    f_dur = res.get("total_duration", 0.0)
+                    f_ratio = res.get("fake_ratio", 0.0)
+                    f_verdict = res.get("verdict", "N/A")
+                    f_hash = res.get("file_hashes", {}).get("sha256", "")[:16] + "..."
+                    peak = res.get("highest_risk_segment", {}).get("fake_probability", 0.0) * 100
+
+                    batch_list.append({
+                        "Filename": f.name,
+                        "Duration (s)": f_dur,
+                        "Synthetic Ratio (%)": f_ratio,
+                        "Peak Risk (%)": round(peak, 1),
+                        "Verdict": f_verdict,
+                        "SHA-256 Preview": f_hash,
+                        "_raw_result": res,
+                        "_raw_bytes": content,
+                    })
+
+                progress_bar.progress((i + 1) / len(batch_files))
+
+            status_text.text(f"✓ Bulk scanning completed for {len(batch_list)} files.")
+            st.session_state["batch_results"] = batch_list
+
+    if st.session_state.get("batch_results"):
+        b_results = st.session_state["batch_results"]
+        df_display = pd.DataFrame([
+            {k: v for k, v in row.items() if not k.startswith("_")}
+            for row in b_results
+        ])
+
+        st.dataframe(df_display, use_container_width=True)
+
+        # CSV Download
+        csv_buffer = io.StringIO()
+        df_display.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="📥 Export Batch Summary (CSV)",
+            data=csv_buffer.getvalue(),
+            file_name="AudioArtifact_Batch_Forensic_Summary.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        # One-click inspect any batch item in Single Localizer
+        st.markdown("##### ◈ Inspect File in Single Localizer")
+        c_bsel, c_bact = st.columns([3, 1])
+        with c_bsel:
+            batch_filenames = [r["Filename"] for r in b_results]
+            selected_b_file = st.selectbox(
+                "Select a scanned file to inspect its full timeline:",
+                options=batch_filenames,
+                key="sel_batch_inspect"
+            )
+        with c_bact:
+            st.write("")
+            sel_item = next((r for r in b_results if r["Filename"] == selected_b_file), None)
+            if sel_item:
+                st.button(
+                    "Inspect ◈",
+                    key="btn_batch_inspect_redirect",
+                    use_container_width=True,
+                    on_click=reinspect_scan_callback,
+                    args=(sel_item["_raw_result"], sel_item["Filename"], sel_item.get("_raw_bytes"))
+                )
+
+
+# ======================================================================
+# TAB 5: SESSION HISTORY & AUDIT LOG
+# ======================================================================
+with tab_history:
+    st.markdown('<div class="section-label">Session Forensic History & Audit Log</div>', unsafe_allow_html=True)
+
+    session_scans = st.session_state.get("session_scans", [])
+
+    col_h_ctrl1, col_h_ctrl2, col_h_clear = st.columns([2, 2, 1])
+    with col_h_ctrl1:
+        search_query = st.text_input("🔍 Search by filename", "", placeholder="Enter file name...", key="hist_search")
+    with col_h_ctrl2:
+        verdict_filter = st.selectbox("Filter by Verdict", ["All", "AI Fake / Synthetic", "Authentic Human", "Spliced Audio"], key="hist_filter")
+    with col_h_clear:
+        st.write("")
+        st.write("")
+        if session_scans and st.button("🗑️ Clear History", use_container_width=True, key="btn_clear_hist"):
             st.session_state["session_scans"] = []
             if "last_result" in st.session_state:
                 del st.session_state["last_result"]
             st.rerun()
 
-if session_scans:
-    with st.expander(f"Session Scan Records ({len(session_scans)} file{'s' if len(session_scans) > 1 else ''})", expanded=True):
-        for idx, h in enumerate(session_scans):
+    # Filter records
+    filtered_scans = []
+    for s in session_scans:
+        v = s.get("verdict", "")
+        f_name = s.get("filename", "").lower()
+        if search_query.lower() and search_query.lower() not in f_name:
+            continue
+        if verdict_filter == "AI Fake / Synthetic" and not ("Synthetic" in v or "Fake" in v):
+            continue
+        if verdict_filter == "Authentic Human" and not ("Authentic" in v or "Human" in v):
+            continue
+        if verdict_filter == "Spliced Audio" and "Spliced" not in v:
+            continue
+        filtered_scans.append(s)
+
+    if filtered_scans:
+        st.write(f"Showing **{len(filtered_scans)}** scan record{'s' if len(filtered_scans) > 1 else ''}:")
+        for idx, h in enumerate(filtered_scans):
             v = h.get("verdict", "")
             col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
             c_info, c_btn = st.columns([4, 1])
             with c_info:
                 st.markdown(f"""
-                <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:10px 14px;margin-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:6px;">
                   <div>
-                    <div style="font-weight:600;font-size:13px;">{h.get('filename')}</div>
-                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
-                      Duration: {h.get('duration_sec', 0):.1f}s · Scanned at {str(h.get('created_at', ''))[11:19]} UTC
+                    <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
+                      Duration: {h.get('duration_sec', 0):.1f}s · Scanned at {h.get('created_at', '')}
                     </div>
+
                   </div>
                   <div style="text-align:right;">
-                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{col_v};background:#1A1E1B;padding:3px 8px;border-radius:10px;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;">
                       {v or 'Scanned'}
                     </span>
-                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
-                      Fake Ratio: {h.get('fake_ratio', 0):.1f}%
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
+                      Synthetic: {h.get('fake_ratio', 0):.1f}%
                     </div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
             with c_btn:
-                if st.button("Inspect ◈", key=f"reinspect_{idx}", use_container_width=True):
-                    st.session_state["last_result"] = h.get("result", {})
-                    st.session_state["analyzed_file_name"] = h.get("filename", "")
-                    st.rerun()
-else:
-    st.markdown("""
-    <div style="background:#131614;border:1px dashed #262B27;border-radius:10px;padding:24px;text-align:center;color:#8C958E;font-size:13px;">
-      No scans in this session yet. Upload and analyze an audio clip above — your scan history for this window will appear here.
-    </div>
-    """, unsafe_allow_html=True)
+                st.write("")
+                st.button(
+                    "Inspect ◈",
+                    key=f"reinspect_tab_{idx}",
+                    use_container_width=True,
+                    on_click=reinspect_scan_callback,
+                    args=(h.get("result", {}), h.get("filename", ""), h.get("audio_bytes", None))
+                )
+
+        # CSV Export for Session History
+        hist_df = pd.DataFrame([
+            {
+                "Filename": h.get("filename"),
+                "Duration (s)": h.get("duration_sec"),
+                "Synthetic Ratio (%)": h.get("fake_ratio"),
+                "Verdict": h.get("verdict"),
+                "Timestamp (UTC)": h.get("created_at"),
+            }
+            for h in filtered_scans
+        ])
+        hist_csv = io.StringIO()
+        hist_df.to_csv(hist_csv, index=False)
+        st.download_button(
+            label="📥 Export History Records (CSV)",
+            data=hist_csv.getvalue(),
+            file_name="AudioArtifact_Session_History.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    else:
+        st.markdown("""
+        <div style="background:#131614;border:1px dashed #262B27;border-radius:10px;padding:28px;text-align:center;color:#8C958E;font-size:13.5px;">
+          No matching forensic scans found. Upload and analyze an audio clip in the 'Single Audio Localizer' tab to populate this audit log.
+        </div>
+        """, unsafe_allow_html=True)
