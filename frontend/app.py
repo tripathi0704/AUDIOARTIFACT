@@ -83,6 +83,18 @@ def is_local_backend_active(port: int = 8000) -> bool:
         return False
 
 
+@st.cache_resource(show_spinner="Initializing forensic foundation models...")
+def preload_cloud_models():
+    """Cache foundation models in memory on startup."""
+    from backend.main import get_model, get_wavlm
+    get_model()
+    return get_wavlm()
+
+
+# If local backend on port 8000 is not active, preload models once in Streamlit process
+if not is_local_backend_active(8000):
+    preload_cloud_models()
+
 st.set_page_config(
     page_title="AudioArtifact v2.0 — Forensic Audio Suite",
     page_icon="◈",
@@ -90,19 +102,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-
-@st.cache_resource(show_spinner="Initializing forensic foundation models...")
-def preload_cloud_models():
-    """Cache foundation models in memory on startup."""
-    from backend.main import get_model, get_wavlm
-    get_model()
-    return get_wavlm()
-
-
-# If local backend on port 8000 is not active, preload models once in Streamlit process
-if not is_local_backend_active(8000):
-    preload_cloud_models()
-
 # Ephemeral session initialization
 if "session_token" not in st.session_state:
     st.session_state["session_token"] = uuid.uuid4().hex[:6].upper()
@@ -112,386 +111,6 @@ if "batch_results" not in st.session_state:
     st.session_state["batch_results"] = []
 if "user_tz_override" not in st.session_state:
     st.session_state["user_tz_override"] = "AUTO"
-
-# ----------------------------------------------------------------------
-# UNIVERSAL FORENSIC LOADING SCREEN (ONLINE & LOCALHOST)
-# Stays active until the "AudioArtifact" dashboard is fully rendered!
-# ----------------------------------------------------------------------
-is_backend_up = is_local_backend_active(8000)
-deploy_env_tag = "LOCALHOST (:8501)" if is_backend_up else "CLOUD INSTANCE"
-
-should_show_splash = False
-if "app_booted" not in st.session_state:
-    st.session_state["app_booted"] = True
-    should_show_splash = True
-elif st.query_params.get("splash") == "1":
-    should_show_splash = True
-
-if should_show_splash:
-    splash_html = """<div id="aa-splash-overlay" onclick="this.classList.add('aa-dismiss');setTimeout(()=>this.remove(),400)">
-<div class="aa-splash-card">
-<div class="aa-splash-header">
-<div class="aa-brand-pill"><span class="aa-brand-icon">◈</span><span class="aa-brand-name">AudioArtifact <span style="font-size:12px;color:#3ECF8E;font-weight:600;">v2.0</span></span></div>
-<div class="aa-env-pill"><span class="aa-pulse-dot"></span><span>__DEPLOY_ENV_TAG__</span></div>
-</div>
-<div class="aa-radar-stage">
-<div class="aa-radar-ring r1"></div>
-<div class="aa-radar-ring r2"></div>
-<div class="aa-radar-ring r3"></div>
-<div class="aa-emblem">
-<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3ECF8E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5v14M7 9v6M22 10v4M2 11v2"/></svg>
-</div>
-<div class="aa-eq-bars">
-<div class="aa-bar b1"></div>
-<div class="aa-bar b2"></div>
-<div class="aa-bar b3"></div>
-<div class="aa-bar b4"></div>
-<div class="aa-bar b5"></div>
-<div class="aa-bar b6"></div>
-<div class="aa-bar b7"></div>
-<div class="aa-bar b8"></div>
-<div class="aa-bar b9"></div>
-</div>
-</div>
-<div class="aa-splash-title">AudioArtifact Forensic Intelligence Suite</div>
-<div class="aa-splash-sub" id="aa-splash-subtitle">Mounting acoustic neural models & temporal speech localizer...</div>
-<div class="aa-bar-track"><div class="aa-bar-fill" id="aa-splash-bar-fill"></div></div>
-<div class="aa-status-meta">
-<span class="aa-step-label" id="aa-splash-step">INITIALIZING FORENSIC PIPELINE</span>
-<span class="aa-pct-label" id="aa-splash-pct">INITIALIZING...</span>
-</div>
-<div class="aa-diag-grid">
-<div class="aa-diag-item"><span class="aa-chk">✓</span> PyTorch Tensor Core & VAD</div>
-<div class="aa-diag-item"><span class="aa-chk">✓</span> WavLM 768-dim Foundation</div>
-<div class="aa-diag-item"><span class="aa-chk">✓</span> Calibrated XGBoost Core</div>
-<div class="aa-diag-item"><span class="aa-chk">✓</span> SHA-256 Cryptographic Chain</div>
-</div>
-<div class="aa-dismiss-tip">Loading will complete automatically once AudioArtifact is ready • Click to bypass</div>
-</div>
-</div>
-<style>
-#aa-splash-overlay {
-position: fixed;
-inset: 0;
-width: 100vw;
-height: 100vh;
-z-index: 99999999;
-background: #0A0C0B;
-background-image: radial-gradient(circle at 50% 30%, rgba(62,207,142,0.12) 0%, rgba(10,12,11,0.98) 70%);
-display: flex;
-align-items: center;
-justify-content: center;
-opacity: 1;
-visibility: visible;
-transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.5s ease;
-cursor: pointer;
-padding: 20px;
-box-sizing: border-box;
-}
-#aa-splash-overlay.aa-dismiss {
-opacity: 0 !important;
-visibility: hidden !important;
-pointer-events: none !important;
-}
-.aa-splash-card {
-background: #131614;
-border: 1px solid #262B27;
-border-radius: 18px;
-padding: 32px 28px;
-width: 100%;
-max-width: 580px;
-box-shadow: 0 20px 50px rgba(0,0,0,0.7), 0 0 35px rgba(62,207,142,0.06);
-position: relative;
-overflow: hidden;
-}
-.aa-splash-card::before {
-content: '';
-position: absolute;
-top: 0; left: 0; right: 0;
-height: 2px;
-background: linear-gradient(90deg, transparent, #3ECF8E, #5EEAD4, transparent);
-}
-.aa-splash-header {
-display: flex;
-align-items: center;
-justify-content: space-between;
-margin-bottom: 20px;
-padding-bottom: 12px;
-border-bottom: 1px solid #262B27;
-}
-.aa-brand-pill {
-display: flex;
-align-items: center;
-gap: 8px;
-font-family: 'Space Grotesk', sans-serif;
-font-weight: 700;
-font-size: 16px;
-color: #ECEFEB;
-}
-.aa-brand-icon {
-width: 24px;
-height: 24px;
-border-radius: 6px;
-background: rgba(62,207,142,0.15);
-border: 1px solid rgba(62,207,142,0.35);
-color: #3ECF8E;
-display: inline-flex;
-align-items: center;
-justify-content: center;
-font-size: 13px;
-}
-.aa-env-pill {
-font-family: 'IBM Plex Mono', monospace;
-font-size: 10.5px;
-font-weight: 600;
-color: #3ECF8E;
-background: rgba(62,207,142,0.08);
-border: 1px solid rgba(62,207,142,0.25);
-border-radius: 20px;
-padding: 4px 10px;
-display: flex;
-align-items: center;
-gap: 6px;
-}
-.aa-pulse-dot {
-width: 6px;
-height: 6px;
-border-radius: 50%;
-background: #3ECF8E;
-box-shadow: 0 0 6px #3ECF8E;
-animation: aaPulse 1.4s infinite;
-}
-@keyframes aaPulse {
-0%, 100% { transform: scale(1); opacity: 1; }
-50% { transform: scale(1.4); opacity: 0.4; }
-}
-.aa-radar-stage {
-position: relative;
-height: 110px;
-display: flex;
-align-items: center;
-justify-content: center;
-margin: 10px 0 16px;
-}
-.aa-radar-ring {
-position: absolute;
-border-radius: 50%;
-border: 1px solid rgba(62,207,142,0.3);
-animation: aaRadar 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-}
-.aa-radar-ring.r1 { animation-delay: 0s; }
-.aa-radar-ring.r2 { animation-delay: 0.7s; }
-.aa-radar-ring.r3 { animation-delay: 1.4s; }
-@keyframes aaRadar {
-0% { width: 56px; height: 56px; opacity: 0.8; }
-100% { width: 160px; height: 160px; opacity: 0; }
-}
-.aa-emblem {
-width: 56px;
-height: 56px;
-border-radius: 50%;
-background: #1A1E1B;
-border: 1px solid rgba(62,207,142,0.4);
-display: flex;
-align-items: center;
-justify-content: center;
-z-index: 2;
-box-shadow: 0 0 20px rgba(62,207,142,0.2);
-}
-.aa-eq-bars {
-position: absolute;
-bottom: 6px;
-display: flex;
-align-items: flex-end;
-gap: 4px;
-height: 24px;
-z-index: 1;
-}
-.aa-bar {
-width: 3px;
-background: linear-gradient(180deg, #5EEAD4, #3ECF8E);
-border-radius: 2px;
-animation: aaEqBounce 1.2s ease-in-out infinite alternate;
-}
-.aa-bar.b1 { height: 8px; animation-delay: 0.1s; }
-.aa-bar.b2 { height: 16px; animation-delay: 0.3s; }
-.aa-bar.b3 { height: 22px; animation-delay: 0.2s; }
-.aa-bar.b4 { height: 12px; animation-delay: 0.5s; }
-.aa-bar.b5 { height: 24px; animation-delay: 0.05s; }
-.aa-bar.b6 { height: 14px; animation-delay: 0.4s; }
-.aa-bar.b7 { height: 20px; animation-delay: 0.25s; }
-.aa-bar.b8 { height: 10px; animation-delay: 0.45s; }
-.aa-bar.b9 { height: 7px; animation-delay: 0.15s; }
-@keyframes aaEqBounce {
-0% { transform: scaleY(0.25); opacity: 0.4; }
-100% { transform: scaleY(1); opacity: 1; }
-}
-.aa-splash-title {
-text-align: center;
-font-family: 'Space Grotesk', sans-serif;
-font-size: 17px;
-font-weight: 700;
-color: #ECEFEB;
-margin-bottom: 4px;
-}
-.aa-splash-sub {
-text-align: center;
-font-family: 'IBM Plex Mono', monospace;
-font-size: 11.5px;
-color: #8C958E;
-margin-bottom: 18px;
-min-height: 16px;
-}
-.aa-bar-track {
-height: 6px;
-background: #1A1E1B;
-border: 1px solid #262B27;
-border-radius: 6px;
-overflow: hidden;
-margin-bottom: 6px;
-}
-.aa-bar-fill {
-height: 100%;
-width: 15%;
-background: linear-gradient(90deg, #3ECF8E, #5EEAD4);
-border-radius: 6px;
-transition: width 0.3s ease;
-box-shadow: 0 0 10px rgba(62,207,142,0.5);
-}
-.aa-status-meta {
-display: flex;
-justify-content: space-between;
-align-items: center;
-font-family: 'IBM Plex Mono', monospace;
-font-size: 10.5px;
-color: #8C958E;
-margin-bottom: 18px;
-}
-.aa-pct-label {
-font-weight: 700;
-color: #3ECF8E;
-}
-.aa-diag-grid {
-display: grid;
-grid-template-columns: 1fr 1fr;
-gap: 8px;
-margin-bottom: 16px;
-}
-.aa-diag-item {
-background: #1A1E1B;
-border: 1px solid #262B27;
-border-radius: 8px;
-padding: 8px 10px;
-font-size: 11px;
-font-family: 'IBM Plex Mono', monospace;
-color: #ECEFEB;
-display: flex;
-align-items: center;
-gap: 6px;
-}
-.aa-chk {
-color: #3ECF8E;
-font-weight: 700;
-}
-.aa-dismiss-tip {
-text-align: center;
-font-family: 'IBM Plex Mono', monospace;
-font-size: 10px;
-color: #5E6660;
-}
-</style>""".replace("__DEPLOY_ENV_TAG__", deploy_env_tag)
-    st.markdown(splash_html, unsafe_allow_html=True)
-
-
-
-    # Active DOM watcher: Keeps loading screen running until "AudioArtifact" is on screen
-    components.html(
-        """
-        <script>
-        (function() {
-            const pDoc = window.parent.document;
-            let counter = 0;
-            const watcher = setInterval(function() {
-                counter++;
-                try {
-                    const overlay = pDoc.getElementById('aa-splash-overlay');
-                    if (!overlay) {
-                        clearInterval(watcher);
-                        return;
-                    }
-
-                    // Check if the "AudioArtifact" heading or completion marker is rendered on screen
-                    const hero = pDoc.getElementById('audioartifact-main-hero') || pDoc.querySelector('.hero-title');
-                    const readyMarker = pDoc.getElementById('audioartifact-fully-loaded');
-                    const hasAudioArtifact = (hero && hero.textContent && hero.textContent.includes("AudioArtifact")) ||
-                                            (pDoc.body && pDoc.body.textContent && pDoc.body.textContent.includes("AudioArtifact — Forensic"));
-
-                    const fill = pDoc.getElementById('aa-splash-bar-fill');
-                    const pct = pDoc.getElementById('aa-splash-pct');
-                    const step = pDoc.getElementById('aa-splash-step');
-                    const sub = pDoc.getElementById('aa-splash-subtitle');
-
-                    if (!hasAudioArtifact || !readyMarker) {
-                        // Keep loading screen alive and animate progress
-                        const simPct = Math.min(94, 20 + Math.floor(counter * 3.5));
-                        if (fill) fill.style.width = simPct + '%';
-                        if (pct) pct.textContent = simPct + '%';
-                        if (counter > 4 && step) step.textContent = 'CALIBRATING ACOUSTIC TRANSFORMERS...';
-                        if (counter > 10 && step) step.textContent = 'RENDERING AUDIOARTIFACT DASHBOARD...';
-                    } else {
-                        // User requirement: AudioArtifact is now rendered on screen!
-                        clearInterval(watcher);
-                        if (fill) fill.style.width = '100%';
-                        if (pct) pct.textContent = '100%';
-                        if (step) step.textContent = '◈ AUDIOARTIFACT READY';
-                        if (sub) sub.textContent = 'AudioArtifact is ready — revealing dashboard...';
-
-                        setTimeout(function() {
-                            overlay.classList.add('aa-dismiss');
-                            setTimeout(function() {
-                                try { overlay.remove(); } catch(e) {}
-                            }, 500);
-                        }, 400);
-                    }
-
-                    // Fallback after 35s
-                    if (counter > 350) {
-                        clearInterval(watcher);
-                        overlay.classList.add('aa-dismiss');
-                    }
-                } catch(e) {}
-            }, 100);
-        })();
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-@st.cache_resource(show_spinner="Initializing forensic foundation models...")
-def preload_cloud_models():
-    """Cache foundation models in memory on startup."""
-    from backend.main import get_model, get_wavlm
-    get_model()
-    return get_wavlm()
-
-
-# If local backend on port 8000 is not active, preload models once in Streamlit process
-if not is_local_backend_active(8000):
-    preload_cloud_models()
-
-# Ephemeral session initialization
-if "session_token" not in st.session_state:
-    st.session_state["session_token"] = uuid.uuid4().hex[:6].upper()
-if "session_scans" not in st.session_state:
-    st.session_state["session_scans"] = []
-if "batch_results" not in st.session_state:
-    st.session_state["batch_results"] = []
-if "user_tz_override" not in st.session_state:
-    st.session_state["user_tz_override"] = "AUTO"
-
-
 
 # ----------------------------------------------------------------------
 # CLIENT TIMEZONE & LOCAL TIME SYSTEM
@@ -947,14 +566,10 @@ st.markdown(f"""
       <span id="live-header-clock" style="font-weight:600;">{initial_clock_str}</span>
       <span style="color:var(--muted);font-size:10.5px;margin-left:4px;">· {user_tz_label}</span>
     </div>
-    <a href="?splash=1" target="_self" class="status-badge" style="text-decoration:none;cursor:pointer;color:var(--real);border-color:rgba(62,207,142,0.35);" title="Replay Startup Loading Screen">
-      ↺ LOADING SCREEN
-    </a>
     <div class="status-badge">Neural Acoustic Engine · Continuous Temporal Localization</div>
   </div>
 </div>
-
-<h1 class="hero-title" id="audioartifact-main-hero">Audio<span class="real">Artifact</span> — Forensic <span class="fake">Deepfake</span> Audio Suite</h1>
+<h1 class="hero-title">Audio<span class="real">Artifact</span> — Forensic <span class="fake">Deepfake</span> Audio Suite</h1>
 <p class="hero-sub">
   Enterprise-grade audio forensic intelligence: continuous temporal localization,
   acoustic bio-marker verification, speaker voiceprint cross-matching,
@@ -1861,11 +1476,3 @@ with tab_history:
           No matching forensic scans found. Upload and analyze an audio clip in the 'Single Audio Localizer' tab to populate this audit log.
         </div>
         """, unsafe_allow_html=True)
-
-# ----------------------------------------------------------------------
-# AUDIT COMPLETION ANCHOR (SIGNALS LOADER THAT AUDIOARTIFACT UI IS READY)
-# ----------------------------------------------------------------------
-st.markdown("""
-<div id="audioartifact-fully-loaded" style="display:none;" data-ready="true"></div>
-""", unsafe_allow_html=True)
-
