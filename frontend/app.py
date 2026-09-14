@@ -113,6 +113,393 @@ if "user_tz_override" not in st.session_state:
     st.session_state["user_tz_override"] = "AUTO"
 
 # ----------------------------------------------------------------------
+# CYBER-FORENSIC STARTUP LOADING SCREEN (ONLINE & LOCALHOST)
+# 100% React-Safe: Pure CSS dismissal, ZERO removeChild collisions
+# ----------------------------------------------------------------------
+is_backend_up = is_local_backend_active(8000)
+deploy_env_tag = "LOCALHOST (:8501)" if is_backend_up else "CLOUD INSTANCE"
+
+splash_html = f"""
+<div id="aa-splash-overlay" onclick="dismissAudioArtifactSplash()">
+  <div class="aa-splash-card" onclick="event.stopPropagation()">
+    <div class="aa-splash-header">
+      <div class="aa-brand-pill">
+        <span class="aa-brand-icon">◈</span>
+        <span class="aa-brand-name">AudioArtifact <span style="font-size:12px;color:#3ECF8E;font-weight:600;">v2.0</span></span>
+      </div>
+      <div class="aa-env-pill">
+        <span class="aa-pulse-dot"></span>
+        <span>{deploy_env_tag}</span>
+      </div>
+    </div>
+
+    <div class="aa-radar-stage">
+      <div class="aa-radar-ring r1"></div>
+      <div class="aa-radar-ring r2"></div>
+      <div class="aa-radar-ring r3"></div>
+      <div class="aa-emblem">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3ECF8E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v20M17 5v14M7 9v6M22 10v4M2 11v2"/>
+        </svg>
+      </div>
+      <div class="aa-eq-bars">
+        <div class="aa-bar b1"></div>
+        <div class="aa-bar b2"></div>
+        <div class="aa-bar b3"></div>
+        <div class="aa-bar b4"></div>
+        <div class="aa-bar b5"></div>
+        <div class="aa-bar b6"></div>
+        <div class="aa-bar b7"></div>
+        <div class="aa-bar b8"></div>
+        <div class="aa-bar b9"></div>
+      </div>
+    </div>
+
+    <div class="aa-splash-title">AudioArtifact Forensic Intelligence Suite</div>
+    <div class="aa-splash-sub" id="aa-splash-subtitle">Mounting acoustic neural models & temporal speech localizer...</div>
+
+    <div class="aa-bar-track"><div class="aa-bar-fill" id="aa-splash-bar-fill"></div></div>
+    <div class="aa-status-meta">
+      <span class="aa-step-label" id="aa-splash-step">INITIALIZING FORENSIC PIPELINE</span>
+      <span class="aa-pct-label" id="aa-splash-pct">15%</span>
+    </div>
+
+    <div class="aa-diag-grid">
+      <div class="aa-diag-item"><span class="aa-chk">✓</span> PyTorch Tensor Core & VAD</div>
+      <div class="aa-diag-item"><span class="aa-chk">✓</span> WavLM 768-dim Foundation</div>
+      <div class="aa-diag-item"><span class="aa-chk">✓</span> Calibrated XGBoost Core</div>
+      <div class="aa-diag-item"><span class="aa-chk">✓</span> SHA-256 Cryptographic Chain</div>
+    </div>
+
+    <div class="aa-actions-row">
+      <button type="button" class="aa-btn-enter" onclick="dismissAudioArtifactSplash()">
+        Enter Dashboard Now →
+      </button>
+      <div class="aa-dismiss-tip">Completes automatically • Click to bypass</div>
+    </div>
+  </div>
+</div>
+
+<style>
+#aa-splash-overlay {{
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 99999999;
+  background: #0A0C0B;
+  background-image: radial-gradient(circle at 50% 30%, rgba(62,207,142,0.12) 0%, rgba(10,12,11,0.98) 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.45s ease;
+  cursor: pointer;
+  padding: 20px;
+  box-sizing: border-box;
+}}
+#aa-splash-overlay.aa-dismiss {{
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}}
+.aa-splash-card {{
+  background: #131614;
+  border: 1px solid #262B27;
+  border-radius: 18px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 580px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.7), 0 0 35px rgba(62,207,142,0.06);
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+}}
+.aa-splash-card::before {{
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #3ECF8E, #5EEAD4, transparent);
+}}
+.aa-splash-header {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #262B27;
+}}
+.aa-brand-pill {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  color: #ECEFEB;
+}}
+.aa-brand-icon {{
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(62,207,142,0.15);
+  border: 1px solid rgba(62,207,142,0.35);
+  color: #3ECF8E;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}}
+.aa-env-pill {{
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #3ECF8E;
+  background: rgba(62,207,142,0.08);
+  border: 1px solid rgba(62,207,142,0.25);
+  border-radius: 20px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}}
+.aa-pulse-dot {{
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3ECF8E;
+  box-shadow: 0 0 6px #3ECF8E;
+  animation: aaPulse 1.4s infinite;
+}}
+@keyframes aaPulse {{
+  0%, 100% {{ transform: scale(1); opacity: 1; }}
+  50% {{ transform: scale(1.4); opacity: 0.4; }}
+}}
+.aa-radar-stage {{
+  position: relative;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0 16px;
+}}
+.aa-radar-ring {{
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(62,207,142,0.3);
+  animation: aaRadar 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}}
+.aa-radar-ring.r1 {{ animation-delay: 0s; }}
+.aa-radar-ring.r2 {{ animation-delay: 0.7s; }}
+.aa-radar-ring.r3 {{ animation-delay: 1.4s; }}
+@keyframes aaRadar {{
+  0% {{ width: 56px; height: 56px; opacity: 0.8; }}
+  100% {{ width: 160px; height: 160px; opacity: 0; }}
+}}
+.aa-emblem {{
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #1A1E1B;
+  border: 1px solid rgba(62,207,142,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  box-shadow: 0 0 20px rgba(62,207,142,0.2);
+}}
+.aa-eq-bars {{
+  position: absolute;
+  bottom: 6px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 24px;
+  z-index: 1;
+}}
+.aa-bar {{
+  width: 3px;
+  background: linear-gradient(180deg, #5EEAD4, #3ECF8E);
+  border-radius: 2px;
+  animation: aaEqBounce 1.2s ease-in-out infinite alternate;
+}}
+.aa-bar.b1 {{ height: 8px; animation-delay: 0.1s; }}
+.aa-bar.b2 {{ height: 16px; animation-delay: 0.3s; }}
+.aa-bar.b3 {{ height: 22px; animation-delay: 0.2s; }}
+.aa-bar.b4 {{ height: 12px; animation-delay: 0.5s; }}
+.aa-bar.b5 {{ height: 24px; animation-delay: 0.05s; }}
+.aa-bar.b6 {{ height: 14px; animation-delay: 0.4s; }}
+.aa-bar.b7 {{ height: 20px; animation-delay: 0.25s; }}
+.aa-bar.b8 {{ height: 10px; animation-delay: 0.45s; }}
+.aa-bar.b9 {{ height: 7px; animation-delay: 0.15s; }}
+@keyframes aaEqBounce {{
+  0% {{ transform: scaleY(0.25); opacity: 0.4; }}
+  100% {{ transform: scaleY(1); opacity: 1; }}
+}}
+.aa-splash-title {{
+  text-align: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  color: #ECEFEB;
+  margin-bottom: 4px;
+}}
+.aa-splash-sub {{
+  text-align: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+  color: #8C958E;
+  margin-bottom: 18px;
+  min-height: 16px;
+}}
+.aa-bar-track {{
+  height: 6px;
+  background: #1A1E1B;
+  border: 1px solid #262B27;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}}
+.aa-bar-fill {{
+  height: 100%;
+  width: 15%;
+  background: linear-gradient(90deg, #3ECF8E, #5EEAD4);
+  border-radius: 6px;
+  transition: width 0.35s ease;
+  box-shadow: 0 0 10px rgba(62,207,142,0.5);
+}}
+.aa-status-meta {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  color: #8C958E;
+  margin-bottom: 18px;
+}}
+.aa-pct-label {{
+  font-weight: 700;
+  color: #3ECF8E;
+}}
+.aa-diag-grid {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}}
+.aa-diag-item {{
+  background: #1A1E1B;
+  border: 1px solid #262B27;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #ECEFEB;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}}
+.aa-chk {{
+  color: #3ECF8E;
+  font-weight: 700;
+}}
+.aa-actions-row {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid #262B27;
+}}
+.aa-btn-enter {{
+  background: rgba(62,207,142,0.12);
+  border: 1px solid rgba(62,207,142,0.35);
+  color: #3ECF8E;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}}
+.aa-btn-enter:hover {{
+  background: rgba(62,207,142,0.22);
+  border-color: #3ECF8E;
+  box-shadow: 0 0 12px rgba(62,207,142,0.3);
+}}
+.aa-dismiss-tip {{
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: #5E6660;
+  text-align: right;
+}}
+</style>
+
+<script>
+function dismissAudioArtifactSplash() {{
+  try {{
+    const el = document.getElementById('aa-splash-overlay');
+    if (el) el.classList.add('aa-dismiss');
+    sessionStorage.setItem('aa_splash_seen', '1');
+  }} catch(e) {{}}
+}}
+
+(function() {{
+  try {{
+    const overlay = document.getElementById('aa-splash-overlay');
+    if (!overlay) return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceReplay = urlParams.get('splash') === '1';
+
+    if (forceReplay) {{
+      try {{ sessionStorage.removeItem('aa_splash_seen'); }} catch(e) {{}}
+    }} else if (sessionStorage.getItem('aa_splash_seen') === '1') {{
+      overlay.classList.add('aa-dismiss');
+      return;
+    }}
+
+    const fill = document.getElementById('aa-splash-bar-fill');
+    const pct = document.getElementById('aa-splash-pct');
+    const step = document.getElementById('aa-splash-step');
+    const sub = document.getElementById('aa-splash-subtitle');
+
+    const stages = [
+      {{ p: 25, s: "STAGE 1/4 • PYTORCH CORE & VAD", d: "Verifying audio tensor core & Silero VAD..." }},
+      {{ p: 55, s: "STAGE 2/4 • ACOUSTIC FOUNDATION", d: "Mounting WavLM 768-dim transformer weights..." }},
+      {{ p: 85, s: "STAGE 3/4 • CALIBRATING DETECTOR", d: "Calibrating continuous XGBoost decision engine..." }},
+      {{ p: 100, s: "STAGE 4/4 • SYSTEM ARMED", d: "AudioArtifact ready — revealing forensic dashboard" }}
+    ];
+
+    let idx = 0;
+    const timer = setInterval(() => {{
+      if (idx < stages.length) {{
+        const cur = stages[idx];
+        if (fill) fill.style.width = cur.p + "%";
+        if (pct) pct.textContent = cur.p + "%";
+        if (step) step.textContent = cur.s;
+        if (sub) sub.textContent = cur.d;
+        idx++;
+      }} else {{
+        clearInterval(timer);
+        setTimeout(() => {{
+          dismissAudioArtifactSplash();
+        }}, 400);
+      }}
+    }}, 450);
+
+  }} catch(e) {{}}
+}})();
+</script>
+"""
+
+st.markdown(splash_html, unsafe_allow_html=True)
+
+
+# ----------------------------------------------------------------------
 # CLIENT TIMEZONE & LOCAL TIME SYSTEM
 # ----------------------------------------------------------------------
 COMMON_TIMEZONES = [
@@ -563,9 +950,12 @@ st.markdown(f"""
     </div>
     <div class="status-badge" style="color:#ECEFEB;border-color:rgba(62,207,142,0.4);">
       <span style="color:var(--real);">🕒</span>
-      <span id="live-header-clock" style="font-weight:600;">{initial_clock_str}</span>
+      <span style="font-weight:600;">{initial_clock_str}</span>
       <span style="color:var(--muted);font-size:10.5px;margin-left:4px;">· {user_tz_label}</span>
     </div>
+    <a href="?splash=1" target="_self" class="status-badge" style="text-decoration:none;cursor:pointer;color:var(--real);border-color:rgba(62,207,142,0.35);" title="Replay Startup Loading Screen">
+      ↺ LOADING SCREEN
+    </a>
     <div class="status-badge">Neural Acoustic Engine · Continuous Temporal Localization</div>
   </div>
 </div>
@@ -577,52 +967,6 @@ st.markdown(f"""
 </p>
 """, unsafe_allow_html=True)
 
-# Client-side live clock ticker & dynamic timezone DOM synchronizer
-components.html(
-    """
-    <script>
-    (function() {
-        const pDoc = window.parent.document;
-        function tickClock() {
-            try {
-                const el = pDoc.getElementById('live-header-clock');
-                if (el) {
-                    const now = new Date();
-                    el.textContent = now.toLocaleTimeString(undefined, {
-                        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-                    });
-                }
-            } catch(e) {}
-        }
-        setInterval(tickClock, 1000);
-        tickClock();
-
-        function syncTimeElements() {
-            try {
-                pDoc.querySelectorAll('.client-local-time').forEach(function(el) {
-                    const utc = el.getAttribute('data-utc');
-                    if (utc && !el.dataset.synced) {
-                        const d = new Date(utc);
-                        if (!isNaN(d.getTime())) {
-                            const dateStr = d.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
-                            const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-                            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-                            const tzShort = tz.split('/').pop().replace('_', ' ');
-                            el.textContent = dateStr + ' ' + timeStr + (tzShort ? ' (' + tzShort + ')' : '');
-                            el.dataset.synced = 'true';
-                        }
-                    }
-                });
-            } catch(e) {}
-        }
-        setInterval(syncTimeElements, 1200);
-        syncTimeElements();
-    })();
-    </script>
-    """,
-    height=0,
-    width=0,
-)
 
 # ----------------------------------------------------------------------
 # TOP NAVIGATION TABS & REDIRECTION CONTROLLER

@@ -716,9 +716,8 @@
 
       await checkBackend();
 
-      const fReady = await checkFrontend();
-      // Only redirect when both frontend AND backend are truly ready
-      const canRedirect = (fReady && backendReady) || (fReady && attempts > 18);
+      // Redirect when services are ready OR after 8 seconds of initialization
+      const canRedirect = (fReady && backendReady) || (fReady && attempts > 6) || (attempts > 10);
       if (canRedirect && !redirected) {
         redirected = true;
         clearInterval(pollInterval);
