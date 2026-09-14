@@ -173,10 +173,10 @@ def compute_speaker_similarity(emb1: np.ndarray, emb2: np.ndarray) -> dict:
     }
 
 
-def generate_forensic_html_report(result: dict) -> str:
+def generate_forensic_html_report(result: dict, user_tz_name: str = None) -> str:
     """
     Generates a professional, self-contained, responsive forensic audit certificate.
-    Supports browser print-to-PDF with clean formatting.
+    Supports browser print-to-PDF with clean formatting and dynamic local timezone conversion.
     """
     filename = result.get("filename", "audio_evidence.wav")
     total_dur = result.get("total_duration", 0.0)
@@ -187,7 +187,18 @@ def generate_forensic_html_report(result: dict) -> str:
     highest = result.get("highest_risk_segment", {})
     hashes = result.get("file_hashes", {})
     forensics = result.get("forensic_signals", {})
-    report_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    now_utc = datetime.now(timezone.utc)
+    utc_iso = now_utc.isoformat().replace("+00:00", "Z")
+    report_ts = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    if user_tz_name:
+        try:
+            import zoneinfo
+            tz_obj = zoneinfo.ZoneInfo(user_tz_name)
+            local_dt = now_utc.astimezone(tz_obj)
+            report_ts = local_dt.strftime("%Y-%m-%d %I:%M:%S %p") + f" ({user_tz_name})"
+        except Exception:
+            pass
 
     verdict_color = "#3ECF8E" if fake_ratio <= 15 else "#FF5C5C" if fake_ratio >= 75 else "#FFB454"
     verdict_bg = "rgba(62,207,142,0.12)" if fake_ratio <= 15 else "rgba(255,92,92,0.12)" if fake_ratio >= 75 else "rgba(255,180,84,0.12)"
@@ -371,7 +382,7 @@ def generate_forensic_html_report(result: dict) -> str:
     </div>
     <div>
       <button class="btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
-      <div class="meta-tag" style="margin-top:8px;">AUDIT TS: {report_ts}</div>
+      <div class="meta-tag" id="report-audit-ts" data-utc="{utc_iso}" style="margin-top:8px;">AUDIT TS: {report_ts}</div>
     </div>
   </div>
 
@@ -453,6 +464,23 @@ def generate_forensic_html_report(result: dict) -> str:
     <div>AudioArtifact v2.0 Forensic Suite</div>
   </div>
 
+  <script>
+    try {{
+      const tsEl = document.getElementById('report-audit-ts');
+      if (tsEl && tsEl.dataset.utc) {{
+        const d = new Date(tsEl.dataset.utc);
+        if (!isNaN(d.getTime())) {{
+          const localStr = d.toLocaleString(undefined, {{
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: true
+          }});
+          const tzStr = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
+          tsEl.textContent = 'AUDIT TS: ' + localStr + ' (' + tzStr + ')';
+        }}
+      }}
+    }} catch(e) {{}}
+  </script>
 </div>
 </body>
 </html>"""

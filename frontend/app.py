@@ -20,8 +20,11 @@ import types
 import io
 import json
 import uuid
+from datetime import datetime, timezone, timedelta
+import zoneinfo
 import requests
 import pandas as pd
+import streamlit.components.v1 as components
 
 # Windows 11 Smart App Control & cross-platform safe numba bypass for librosa
 try:
@@ -106,6 +109,152 @@ if "session_scans" not in st.session_state:
     st.session_state["session_scans"] = []
 if "batch_results" not in st.session_state:
     st.session_state["batch_results"] = []
+if "user_tz_override" not in st.session_state:
+    st.session_state["user_tz_override"] = "AUTO"
+
+# ----------------------------------------------------------------------
+# CLIENT TIMEZONE & LOCAL TIME SYSTEM
+# ----------------------------------------------------------------------
+COMMON_TIMEZONES = [
+    ("🌐 Auto-Detect Browser Timezone", "AUTO"),
+    ("🇮🇳 India (IST, UTC+05:30) — Asia/Kolkata", "Asia/Kolkata"),
+    ("🇺🇸 US Eastern (EST/EDT) — America/New_York", "America/New_York"),
+    ("🇺🇸 US Central (CST/CDT) — America/Chicago", "America/Chicago"),
+    ("🇺🇸 US Mountain (MST/MDT) — America/Denver", "America/Denver"),
+    ("🇺🇸 US Pacific (PST/PDT) — America/Los_Angeles", "America/Los_Angeles"),
+    ("🇬🇧 United Kingdom (GMT/BST) — Europe/London", "Europe/London"),
+    ("🇪🇺 Central Europe (CET/CEST) — Europe/Paris", "Europe/Paris"),
+    ("🇦🇪 UAE (GST, UTC+04:00) — Asia/Dubai", "Asia/Dubai"),
+    ("🇸🇬 Singapore / Malaysia (SGT, UTC+08:00) — Asia/Singapore", "Asia/Singapore"),
+    ("🇯🇵 Japan (JST, UTC+09:00) — Asia/Tokyo", "Asia/Tokyo"),
+    ("🇦🇺 Australia Eastern (AEST/AEDT) — Australia/Sydney", "Australia/Sydney"),
+    ("🌍 Universal Coordinated Time — UTC", "UTC"),
+]
+
+
+def resolve_client_timezone():
+    """
+    Detects the visitor's local country timezone dynamically.
+    Priority order:
+    1. User manual override (if set in session_state and != 'AUTO')
+    2. Query param ?tz= (e.g. ?tz=Asia/Kolkata)
+    3. Streamlit native browser context st.context.timezone (IANA string, e.g. 'Asia/Kolkata')
+    4. Streamlit native timezone offset st.context.timezone_offset (minutes from UTC)
+    5. Fallback to host local machine timezone (for localhost development)
+    6. Default to 'Asia/Kolkata' (IST) or UTC.
+    Returns: (tz_obj, tz_name, tz_display_label, is_auto)
+    """
+    selected_choice = st.session_state.get("user_tz_override", "AUTO")
+
+    # If manual specific timezone selected
+    if selected_choice and selected_choice != "AUTO":
+        try:
+            tz_obj = zoneinfo.ZoneInfo(selected_choice)
+            now_sample = datetime.now(timezone.utc).astimezone(tz_obj)
+            abbr = now_sample.strftime("%Z")
+            lbl = f"{selected_choice} ({abbr})" if abbr and not abbr.startswith("+") and not abbr.startswith("-") else selected_choice
+            return tz_obj, selected_choice, lbl, False
+        except Exception:
+            pass
+
+    # 1. Check Query Parameter (?tz=)
+    query_tz = st.query_params.get("tz")
+    if query_tz:
+        try:
+            tz_obj = zoneinfo.ZoneInfo(query_tz)
+            now_sample = datetime.now(timezone.utc).astimezone(tz_obj)
+            abbr = now_sample.strftime("%Z")
+            lbl = f"{query_tz} ({abbr})" if abbr and not abbr.startswith("+") and not abbr.startswith("-") else query_tz
+            return tz_obj, query_tz, lbl, True
+        except Exception:
+            pass
+
+    # 2. Check Streamlit 1.61+ Browser Context Timezone
+    ctx_tz = getattr(st.context, "timezone", None)
+    if ctx_tz:
+        try:
+            tz_obj = zoneinfo.ZoneInfo(ctx_tz)
+            now_sample = datetime.now(timezone.utc).astimezone(tz_obj)
+            abbr = now_sample.strftime("%Z")
+            lbl = f"{ctx_tz} ({abbr})" if abbr and not abbr.startswith("+") and not abbr.startswith("-") else ctx_tz
+            return tz_obj, ctx_tz, lbl, True
+        except Exception:
+            pass
+
+    # 3. Check Streamlit Timezone Offset (minutes)
+    ctx_offset = getattr(st.context, "timezone_offset", None)
+    if ctx_offset is not None:
+        try:
+            tz_obj = timezone(-timedelta(minutes=ctx_offset))
+            if ctx_offset == -330:
+                return tz_obj, "Asia/Kolkata", "Asia/Kolkata (IST)", True
+            elif ctx_offset in (240, 300):
+                return tz_obj, "America/New_York", "US Eastern (EDT/EST)", True
+            elif ctx_offset in (420, 480):
+                return tz_obj, "America/Los_Angeles", "US Pacific (PDT/PST)", True
+            elif ctx_offset in (0, -60):
+                return tz_obj, "Europe/London", "Europe/London (GMT/BST)", True
+            else:
+                hrs = -ctx_offset // 60
+                mins = abs(-ctx_offset % 60)
+                sign = "+" if hrs >= 0 else "-"
+                lbl = f"UTC{sign}{abs(hrs):02d}:{mins:02d}"
+                return tz_obj, lbl, lbl, True
+        except Exception:
+            pass
+
+    # 4. Fallback to local machine timezone (important for localhost)
+    try:
+        local_sys_tz = datetime.now().astimezone().tzinfo
+        if local_sys_tz and str(local_sys_tz) != "UTC":
+            sys_name = getattr(local_sys_tz, "key", str(local_sys_tz))
+            now_sample = datetime.now(timezone.utc).astimezone(local_sys_tz)
+            abbr = now_sample.strftime("%Z")
+            lbl = f"{sys_name} ({abbr})" if abbr else str(sys_name)
+            return local_sys_tz, sys_name, lbl, True
+    except Exception:
+        pass
+
+    # 5. Default fallback to Asia/Kolkata (IST)
+    try:
+        ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        return ist_tz, "Asia/Kolkata", "Asia/Kolkata (IST)", True
+    except Exception:
+        return timezone.utc, "UTC", "UTC", True
+
+
+def format_local_timestamp(dt_or_str=None, tz_obj=None, tz_name="") -> str:
+    """
+    Formats a datetime or ISO UTC string into a clean local timestamp string.
+    Example: 2026-09-14 08:05:22 PM IST
+    """
+    if dt_or_str is None:
+        dt = datetime.now(timezone.utc)
+    elif isinstance(dt_or_str, str):
+        try:
+            clean_str = dt_or_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return dt_or_str
+    elif isinstance(dt_or_str, datetime):
+        dt = dt_or_str
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        return str(dt_or_str)
+
+    if tz_obj is not None:
+        try:
+            dt = dt.astimezone(tz_obj)
+        except Exception:
+            pass
+
+    abbr = dt.strftime("%Z")
+    if not abbr or abbr.startswith("+") or abbr.startswith("-"):
+        abbr = tz_name.split("/")[-1] if "/" in tz_name else tz_name
+    return dt.strftime("%Y-%m-%d %I:%M:%S %p") + (f" {abbr}" if abbr else "")
 
 # ----------------------------------------------------------------------
 # GLOBAL DARK THEME STYLING
@@ -401,12 +550,21 @@ div.stButton > button:hover {
 # ----------------------------------------------------------------------
 # BRAND HEADER
 # ----------------------------------------------------------------------
+user_tz_obj, user_tz_name, user_tz_label, is_auto_tz = resolve_client_timezone()
+now_local = datetime.now(timezone.utc).astimezone(user_tz_obj)
+initial_clock_str = now_local.strftime("%I:%M:%S %p")
+
 st.markdown(f"""
 <div class="brand-nav">
   <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 Forensic Suite</span></div>
-  <div style="display:flex;align-items:center;gap:8px;">
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <div class="status-badge" style="color:var(--cyan);border-color:rgba(94,234,212,0.3);">
       <i></i>SESSION #{st.session_state['session_token']}
+    </div>
+    <div class="status-badge" style="color:#ECEFEB;border-color:rgba(62,207,142,0.4);">
+      <span style="color:var(--real);">🕒</span>
+      <span id="live-header-clock" style="font-weight:600;">{initial_clock_str}</span>
+      <span style="color:var(--muted);font-size:10.5px;margin-left:4px;">· {user_tz_label}</span>
     </div>
     <div class="status-badge">Neural Acoustic Engine · Continuous Temporal Localization</div>
   </div>
@@ -417,8 +575,54 @@ st.markdown(f"""
   acoustic bio-marker verification, speaker voiceprint cross-matching,
   and cryptographic audit certification.
 </p>
-
 """, unsafe_allow_html=True)
+
+# Client-side live clock ticker & dynamic timezone DOM synchronizer
+components.html(
+    """
+    <script>
+    (function() {
+        const pDoc = window.parent.document;
+        function tickClock() {
+            try {
+                const el = pDoc.getElementById('live-header-clock');
+                if (el) {
+                    const now = new Date();
+                    el.textContent = now.toLocaleTimeString(undefined, {
+                        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+                    });
+                }
+            } catch(e) {}
+        }
+        setInterval(tickClock, 1000);
+        tickClock();
+
+        function syncTimeElements() {
+            try {
+                pDoc.querySelectorAll('.client-local-time').forEach(function(el) {
+                    const utc = el.getAttribute('data-utc');
+                    if (utc && !el.dataset.synced) {
+                        const d = new Date(utc);
+                        if (!isNaN(d.getTime())) {
+                            const dateStr = d.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+                            const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+                            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+                            const tzShort = tz.split('/').pop().replace('_', ' ');
+                            el.textContent = dateStr + ' ' + timeStr + (tzShort ? ' (' + tzShort + ')' : '');
+                            el.dataset.synced = 'true';
+                        }
+                    }
+                });
+            } catch(e) {}
+        }
+        setInterval(syncTimeElements, 1200);
+        syncTimeElements();
+    })();
+    </script>
+    """,
+    height=0,
+    width=0,
+)
 
 # ----------------------------------------------------------------------
 # TOP NAVIGATION TABS & REDIRECTION CONTROLLER
@@ -524,15 +728,17 @@ with tab_single:
             st.session_state["analyzed_file_name"] = uploaded_file.name
             st.session_state["analyzed_audio_bytes"] = file_bytes
 
-            # Save to session scan history using local system time
-            from datetime import datetime
-            created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            # Save to session scan history using visitor local timezone
+            now_utc = datetime.now(timezone.utc)
+            utc_iso = now_utc.isoformat().replace("+00:00", "Z")
+            created_ts = format_local_timestamp(now_utc, user_tz_obj, user_tz_name)
             st.session_state["session_scans"].insert(0, {
                 "filename": uploaded_file.name,
                 "duration_sec": data.get("total_duration", 0.0),
                 "fake_ratio": data.get("fake_ratio", 0.0),
                 "verdict": data.get("verdict", ""),
                 "created_at": created_ts,
+                "created_at_utc": utc_iso,
                 "result": data,
                 "audio_bytes": file_bytes,
             })
@@ -636,7 +842,7 @@ with tab_single:
             </div>
             """, unsafe_allow_html=True)
         with col_dl:
-            report_html = generate_forensic_html_report(data)
+            report_html = generate_forensic_html_report(data, user_tz_name=user_tz_name)
             st.download_button(
                 label="📥 Download Audit Report",
                 data=report_html,
@@ -864,14 +1070,16 @@ with tab_mic:
                     st.session_state["analyzed_file_name"] = "live_microphone_recording.wav"
                     st.session_state["analyzed_audio_bytes"] = mic_bytes
 
-                    from datetime import datetime
-                    created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                    now_utc = datetime.now(timezone.utc)
+                    utc_iso = now_utc.isoformat().replace("+00:00", "Z")
+                    created_ts = format_local_timestamp(now_utc, user_tz_obj, user_tz_name)
                     st.session_state["session_scans"].insert(0, {
                         "filename": "live_microphone_recording.wav",
                         "duration_sec": data.get("total_duration", 0.0),
                         "fake_ratio": data.get("fake_ratio", 0.0),
                         "verdict": data.get("verdict", ""),
                         "created_at": created_ts,
+                        "created_at_utc": utc_iso,
                         "result": data,
                         "audio_bytes": mic_bytes,
                     })
@@ -1000,14 +1208,16 @@ with tab_speaker:
                         """, unsafe_allow_html=True)
 
                     if data_sus:
-                        from datetime import datetime
-                        created_ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                        now_utc = datetime.now(timezone.utc)
+                        utc_iso = now_utc.isoformat().replace("+00:00", "Z")
+                        created_ts = format_local_timestamp(now_utc, user_tz_obj, user_tz_name)
                         st.session_state["session_scans"].insert(0, {
                             "filename": f"[Suspect] {sus_file.name}",
                             "duration_sec": data_sus.get("total_duration", 0.0),
                             "fake_ratio": sus_fake_ratio,
                             "verdict": data_sus.get("verdict", ""),
                             "created_at": created_ts,
+                            "created_at_utc": utc_iso,
                             "result": data_sus,
                             "audio_bytes": sus_bytes,
                         })
@@ -1072,15 +1282,32 @@ with tab_batch:
                     f_hash = res.get("file_hashes", {}).get("sha256", "")[:16] + "..."
                     peak = res.get("highest_risk_segment", {}).get("fake_probability", 0.0) * 100
 
+                    now_utc = datetime.now(timezone.utc)
+                    utc_iso = now_utc.isoformat().replace("+00:00", "Z")
+                    b_ts = format_local_timestamp(now_utc, user_tz_obj, user_tz_name)
+
                     batch_list.append({
                         "Filename": f.name,
                         "Duration (s)": f_dur,
                         "Synthetic Ratio (%)": f_ratio,
                         "Peak Risk (%)": round(peak, 1),
                         "Verdict": f_verdict,
+                        "Scanned At": b_ts,
                         "SHA-256 Preview": f_hash,
                         "_raw_result": res,
                         "_raw_bytes": content,
+                        "_created_at_utc": utc_iso,
+                    })
+
+                    st.session_state["session_scans"].insert(0, {
+                        "filename": f.name,
+                        "duration_sec": f_dur,
+                        "fake_ratio": f_ratio,
+                        "verdict": f_verdict,
+                        "created_at": b_ts,
+                        "created_at_utc": utc_iso,
+                        "result": res,
+                        "audio_bytes": content,
                     })
 
                 progress_bar.progress((i + 1) / len(batch_files))
@@ -1139,11 +1366,26 @@ with tab_history:
 
     session_scans = st.session_state.get("session_scans", [])
 
-    col_h_ctrl1, col_h_ctrl2, col_h_clear = st.columns([2, 2, 1])
+    col_h_ctrl1, col_h_ctrl2, col_h_tz, col_h_clear = st.columns([2, 2, 2, 1])
     with col_h_ctrl1:
         search_query = st.text_input("🔍 Search by filename", "", placeholder="Enter file name...", key="hist_search")
     with col_h_ctrl2:
         verdict_filter = st.selectbox("Filter by Verdict", ["All", "AI Fake / Synthetic", "Authentic Human", "Spliced Audio"], key="hist_filter")
+    with col_h_tz:
+        tz_labels = [label for label, _ in COMMON_TIMEZONES]
+        tz_values = [val for _, val in COMMON_TIMEZONES]
+        current_override = st.session_state.get("user_tz_override", "AUTO")
+        default_idx = tz_values.index(current_override) if current_override in tz_values else 0
+        selected_tz_label = st.selectbox(
+            "🌐 Display Timezone",
+            options=tz_labels,
+            index=default_idx,
+            key="sel_hist_timezone"
+        )
+        new_override_val = tz_values[tz_labels.index(selected_tz_label)]
+        if new_override_val != st.session_state.get("user_tz_override"):
+            st.session_state["user_tz_override"] = new_override_val
+            st.rerun()
     with col_h_clear:
         st.write("")
         st.write("")
@@ -1169,10 +1411,12 @@ with tab_history:
         filtered_scans.append(s)
 
     if filtered_scans:
-        st.write(f"Showing **{len(filtered_scans)}** scan record{'s' if len(filtered_scans) > 1 else ''}:")
+        st.write(f"Showing **{len(filtered_scans)}** scan record{'s' if len(filtered_scans) > 1 else ''} · Timezone: **{user_tz_label}**:")
         for idx, h in enumerate(filtered_scans):
             v = h.get("verdict", "")
             col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
+            utc_iso = h.get("created_at_utc", "")
+            disp_time = format_local_timestamp(utc_iso, user_tz_obj, user_tz_name) if utc_iso else h.get("created_at", "")
             c_info, c_btn = st.columns([4, 1])
             with c_info:
                 st.markdown(f"""
@@ -1180,7 +1424,7 @@ with tab_history:
                   <div>
                     <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
                     <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
-                      Duration: {h.get('duration_sec', 0):.1f}s · Scanned at {h.get('created_at', '')}
+                      Duration: {h.get('duration_sec', 0):.1f}s · Scanned at <span class="client-local-time" data-utc="{utc_iso}">{disp_time}</span>
                     </div>
 
                   </div>
@@ -1204,21 +1448,23 @@ with tab_history:
                     args=(h.get("result", {}), h.get("filename", ""), h.get("audio_bytes", None))
                 )
 
-        # CSV Export for Session History
+        # CSV Export for Session History with Local and UTC timestamps
         hist_df = pd.DataFrame([
             {
                 "Filename": h.get("filename"),
                 "Duration (s)": h.get("duration_sec"),
                 "Synthetic Ratio (%)": h.get("fake_ratio"),
                 "Verdict": h.get("verdict"),
-                "Timestamp (UTC)": h.get("created_at"),
+                "Timestamp (Local)": format_local_timestamp(h.get("created_at_utc"), user_tz_obj, user_tz_name) if h.get("created_at_utc") else h.get("created_at"),
+                "Timezone": user_tz_name,
+                "Timestamp (UTC)": h.get("created_at_utc", ""),
             }
             for h in filtered_scans
         ])
         hist_csv = io.StringIO()
         hist_df.to_csv(hist_csv, index=False)
         st.download_button(
-            label="📥 Export History Records (CSV)",
+            label=f"📥 Export History Records (CSV) — [{user_tz_name}]",
             data=hist_csv.getvalue(),
             file_name="AudioArtifact_Session_History.csv",
             mime="text/csv",
