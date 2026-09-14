@@ -40,18 +40,21 @@ if not exist "%~dp0model\deepfake_detector.pkl" (
 echo Starting Backend (FastAPI on http://127.0.0.1:8000)...
 start "AudioArtifact - Backend" cmd /k "cd /d %~dp0 && call venv\Scripts\activate && uvicorn backend.main:app --port 8000"
 
-echo Waiting for backend service to initialize...
-timeout /t 1 /nobreak >nul
-
 echo Starting Frontend (Streamlit on http://localhost:8501)...
-start "AudioArtifact - Frontend" cmd /k "cd /d %~dp0 && call venv\Scripts\activate && streamlit run frontend\app.py"
+start "AudioArtifact - Frontend" cmd /k "cd /d %~dp0 && call venv\Scripts\activate && streamlit run frontend\app.py --server.headless true"
+
+echo.
+echo Launching Cyber-Forensic Loading Page in browser...
+start "" "%~dp0frontend\loading.html"
 
 echo.
 echo ================================================================
-echo Both servers have been launched in separate windows!
+echo Servers are initializing in the background!
+echo Loading screen has been opened in your default browser.
 echo   - Backend API : http://127.0.0.1:8000 (Swagger docs: /docs)
 echo   - Frontend UI : http://localhost:8501
 echo ================================================================
 echo.
 echo You can minimize or close this launcher window at any time.
 pause
+
