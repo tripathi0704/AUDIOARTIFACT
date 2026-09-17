@@ -440,13 +440,3 @@ def root():
     }
 
 
-@app.get("/loading", response_class=HTMLResponse)
-def loading_page():
-    """Serves the interactive cyber-forensic startup loading page."""
-    loading_file = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "loading.html"))
-    if os.path.exists(loading_file):
-        with open(loading_file, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read(), status_code=200)
-    return HTMLResponse(content="<h1>AudioArtifact v2.0 - Initializing...</h1>", status_code=200)
-
-
