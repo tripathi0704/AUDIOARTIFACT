@@ -1014,7 +1014,7 @@ with tab_mic:
     if mic_audio is not None:
         st.audio(mic_audio)
         if st.button("◈ Analyze Live Recording", type="primary", key="btn_analyze_mic"):
-            with st.spinner("Analyzing live microphone audio..."):
+            with st.spinner("Analyzing live microphone audio across complete duration..."):
                 mic_bytes = mic_audio.getvalue()
                 data = execute_forensic_scan(mic_bytes, "live_microphone_recording.wav")
 
@@ -1024,6 +1024,8 @@ with tab_mic:
                     st.session_state["last_result"] = data
                     st.session_state["analyzed_file_name"] = "live_microphone_recording.wav"
                     st.session_state["analyzed_audio_bytes"] = mic_bytes
+                    st.session_state["mic_analyzed_data"] = data
+                    st.session_state["mic_analyzed_bytes"] = mic_bytes
 
                     now_utc = datetime.now(timezone.utc)
                     utc_iso = now_utc.isoformat().replace("+00:00", "Z")
@@ -1039,26 +1041,54 @@ with tab_mic:
                         "audio_bytes": mic_bytes,
                     })
 
-                    st.success("✓ Live recording analyzed successfully! Switch to the 'Single Audio Localizer' tab to inspect the complete timeline.")
-                    st.button(
-                        "◈ Inspect Timeline in Single Localizer",
-                        key="btn_mic_goto_single",
-                        on_click=reinspect_scan_callback,
-                        args=(data, "live_microphone_recording.wav", mic_bytes),
-                        type="primary",
-                        use_container_width=True
-                    )
-                    # Quick Verdict Pill
-                    fake_ratio = data.get("fake_ratio", 0.0)
-                    verdict = data.get("verdict", "")
-                    col_v = "#3ECF8E" if fake_ratio <= 15 else "#FF5C5C" if fake_ratio >= 75 else "#FFB454"
-                    st.markdown(f"""
-                    <div style="background:#131614;border:1px solid #262B27;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;">
-                      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;">LIVE MIC VERDICT</div>
-                      <div style="font-size:22px;font-weight:700;color:{col_v};margin:4px 0;">{verdict}</div>
-                      <div style="font-size:13px;color:#ECEFEB;">Synthetic Ratio: <b>{fake_ratio}%</b> · Analyzed Duration: <b>{data.get('total_duration', 0)}s</b></div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        # Display results if available for the current microphone recording
+        if "mic_analyzed_data" in st.session_state and mic_audio is not None:
+            data = st.session_state["mic_analyzed_data"]
+            mic_bytes = st.session_state.get("mic_analyzed_bytes", mic_audio.getvalue())
+            segments = data.get("segments", [])
+            total_dur = data.get("total_duration", 0.0)
+            fake_ratio = data.get("fake_ratio", 0.0)
+            verdict = data.get("verdict", "")
+            col_v = "#3ECF8E" if fake_ratio <= 15 else "#FF5C5C" if fake_ratio >= 75 else "#FFB454"
+
+            st.markdown(f"""
+            <div style="background:#131614;border:1px solid #262B27;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;margin-bottom:14px;">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;letter-spacing:0.04em;">LIVE MIC VERDICT · FULL TIMELINE AUDIT</div>
+              <div style="font-size:22px;font-weight:700;color:{col_v};margin:4px 0;">{verdict}</div>
+              <div style="font-size:13px;color:#ECEFEB;">
+                Synthetic Ratio: <b>{fake_ratio}%</b> · Total Recorded Duration: <b>{total_dur}s</b> · Analyzed Frames: <b>{len(segments)} Temporal Windows</b>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Frame-by-frame breakdown directly in Live Mic
+            if segments:
+                st.markdown('<div class="section-label">Continuous Temporal Windows (0.0s to End)</div>', unsafe_allow_html=True)
+                cols = st.columns(min(len(segments), 3))
+                for idx, s in enumerate(segments):
+                    with cols[idx % len(cols)]:
+                        is_seg_fake = s["fake_probability"] >= 0.5
+                        seg_col = "#FF5C5C" if is_seg_fake else "#3ECF8E"
+                        st.markdown(f"""
+                        <div style="background:#1A1E1B;border:1px solid #262B27;border-left:3px solid {seg_col};padding:8px 12px;border-radius:8px;margin-bottom:8px;">
+                          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8C958E;">
+                            WINDOW #{idx+1} · {s.get('start', 0.0)}s – {s.get('end', 0.0)}s
+                          </div>
+                          <div style="font-weight:700;font-size:13px;color:{seg_col};margin-top:2px;">
+                            {'AI Fake' if is_seg_fake else 'Human'} ({s.get('fake_probability', 0)*100:.1f}%)
+                          </div>
+                          <div style="font-size:10.5px;color:#5E6660;">Confidence: {s.get('confidence', 0)}%</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+            st.button(
+                "◈ Inspect Deep 3D Spectrogram & Slices in Single Localizer",
+                key="btn_mic_goto_single",
+                on_click=reinspect_scan_callback,
+                args=(data, "live_microphone_recording.wav", mic_bytes),
+                type="primary",
+                use_container_width=True
+            )
 
 
 # ======================================================================

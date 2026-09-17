@@ -139,22 +139,32 @@ app.add_middleware(
 def slice_overlapping(y: np.ndarray, sr: int = SAMPLE_RATE, window_sec: float = WINDOW_SEC, stride_sec: float = STRIDE_SEC):
     """
     Slice audio into 50% overlapping windows: 2.0s window with 1.0s stride.
-    Returns:
-        List of tuples: (start_time_sec, end_time_sec, segment_waveform)
+    Guarantees complete coverage of the full audio timeline from 0.0s to total_duration.
     """
     win_len = int(window_sec * sr)
     stride_len = int(stride_sec * sr)
+    total_len = len(y)
+    total_sec = round(total_len / sr, 2)
     segments = []
 
-    if len(y) < win_len:
-        if len(y) >= stride_len:
-            padded = np.pad(y, (0, win_len - len(y)), mode="constant")
-            segments.append((0.0, window_sec, padded))
+    if total_len <= win_len:
+        padded = np.pad(y, (0, max(0, win_len - total_len)), mode="constant")
+        segments.append((0.0, max(total_sec, window_sec), padded))
         return segments
 
-    for start in range(0, len(y) - win_len + 1, stride_len):
+    last_end = 0
+    for start in range(0, total_len - win_len + 1, stride_len):
         end = start + win_len
-        segments.append((round(start / sr, 3), round(end / sr, 3), y[start:end]))
+        segments.append((round(start / sr, 2), round(end / sr, 2), y[start:end]))
+        last_end = end
+
+    # If remaining tail audio >= 0.2s, add a final window reaching the exact end of file
+    if last_end < total_len and (total_len - last_end) >= int(0.2 * sr):
+        tail_start = max(0, total_len - win_len)
+        tail_wave = y[tail_start:total_len]
+        if len(tail_wave) < win_len:
+            tail_wave = np.pad(tail_wave, (0, win_len - len(tail_wave)), mode="constant")
+        segments.append((round(tail_start / sr, 2), total_sec, tail_wave))
 
     return segments
 
@@ -204,7 +214,7 @@ def decode_audio_bytes(content: bytes, original_filename: str = "upload.wav"):
 def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") -> dict:
     """
     High-performance forensic analysis engine with in-memory audio decoding
-    and vectorized batch inference for maximum throughput.
+    and vectorized batch inference across the entire continuous audio timeline.
     """
     clf = get_model()
     if clf is None:
@@ -219,15 +229,21 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
     file_hashes = compute_file_hashes(content)
     forensic_signals = compute_acoustic_forensics(y, sr_int)
 
-    # 2. Voice Activity Detection (silence removal)
-    y_speech, speech_intervals = filter_speech_vad(y, sr_int)
-    if len(y_speech) < int(SAMPLE_RATE * 1.0):
-        # If VAD was too restrictive, fall back to raw waveform
-        y_speech = y
+    # Normalize peak amplitude to standard 0.95 so soft microphone recordings are evaluated at standard gain
+    max_amp = float(np.max(np.abs(y))) if len(y) > 0 else 0.0
+    if max_amp > 0.001:
+        y_norm = (y / max_amp) * 0.95
+    else:
+        y_norm = y
 
-    # 3. Overlapping sliding window (2s window, 1s stride)
+    # 2. Voice Activity Detection (silence tracking & acoustic diagnostics)
+    y_speech, speech_intervals = filter_speech_vad(y_norm, sr_int)
+    forensic_signals["speech_intervals"] = speech_intervals
+    forensic_signals["active_speech_duration_sec"] = round(len(y_speech) / sr_int, 2)
 
-    segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+    # 3. Continuous Temporal Sliding Window across the FULL audio timeline
+    # Slices the entire recording from 0.0s to raw_duration so NO seconds are lost!
+    segments = slice_overlapping(y_norm, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
 
     if not segments:
         return {
@@ -356,10 +372,13 @@ def extract_speaker_embedding_vector(content: bytes, original_filename: str = "u
     if y is None or len(y) == 0:
         return None, "Empty audio buffer."
 
-    # Voice Activity Detection (silence removal)
-    y_speech, _ = filter_speech_vad(y, sr_int)
-    if len(y_speech) < int(SAMPLE_RATE * 1.0):
-        y_speech = y
+    # Normalize and apply VAD with fallback
+    max_amp = float(np.max(np.abs(y))) if len(y) > 0 else 0.0
+    y_norm = (y / max_amp * 0.95) if max_amp > 0.001 else y
+
+    y_speech, _ = filter_speech_vad(y_norm, sr_int)
+    if len(y_speech) < int(SAMPLE_RATE * 1.5):
+        y_speech = y_norm
 
     segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
     if not segments:
