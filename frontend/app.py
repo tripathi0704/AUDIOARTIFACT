@@ -1287,18 +1287,6 @@ with tab_single:
                         else:
                             st.error(chat_res.get("error", "Copilot response failed."))
 
-            with st.expander("⚙️ Advanced: Use Custom Gemini API Key (Optional)", expanded=False):
-                st.caption("A shared high-speed Gemini AI key is active by default. You can optionally supply your own key below:")
-                c_k1, c_k2 = st.columns([3, 1])
-                with c_k1:
-                    custom_k = st.text_input("Custom Gemini Key", type="password", placeholder="Enter your own key to override default", key="override_gemini_key", label_visibility="collapsed")
-                with c_k2:
-                    if st.button("Apply Key", key="btn_apply_override", use_container_width=True):
-                        if custom_k.strip():
-                            st.session_state["custom_gemini_api_key"] = custom_k.strip()
-                            st.success("Custom key applied!")
-                            st.rerun()
-
 
 # ======================================================================
 # TAB 2: LIVE MICROPHONE VOICE TEST
