@@ -21,30 +21,54 @@ except ImportError:
     types = None
     GENAI_AVAILABLE = False
 
-FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
+import time
+
+FALLBACK_MODELS = [
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+]
 DEFAULT_MODEL = FALLBACK_MODELS[0]
 
 
 def _generate_with_fallback(client, contents, config=None):
     """
-    Attempts content generation using candidate models sequentially.
-    Handles upstream Google model deprecations and version transitions automatically.
+    Attempts content generation across candidate models sequentially with automatic failover.
+    Gracefully handles upstream 503 high-demand spikes, 429 rate limits, and model deprecations.
     """
     last_err = None
     for model_name in FALLBACK_MODELS:
-        try:
-            res = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-            return res, model_name
-        except Exception as e:
-            err_str = str(e)
-            if "404" in err_str or "NOT_FOUND" in err_str or "not available" in err_str.lower() or "not found" in err_str.lower():
+        # Up to 2 attempts per model in case of a momentary network blip
+        for attempt in range(2):
+            try:
+                res = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                return res, model_name
+            except Exception as e:
                 last_err = e
-                continue
-            raise e
+                err_str = str(e).lower()
+                # If high demand, unavailable, rate limited, or not found, proceed to next candidate
+                is_transient = any(term in err_str for term in [
+                    "503", "unavailable", "high demand", "temporary", "temporarily",
+                    "429", "resource_exhausted", "quota", "rate limit",
+                    "404", "not_found", "not found", "no longer available",
+                    "500", "504", "deadline", "timeout", "overloaded"
+                ])
+                if is_transient:
+                    time.sleep(0.6 * (attempt + 1))
+                    if attempt == 1:
+                        # Move on to the next candidate model
+                        break
+                    continue
+                else:
+                    # Other unknown exception, try next candidate model
+                    time.sleep(0.5)
+                    break
+
     raise last_err or RuntimeError("No compatible Gemini model found.")
 
 
