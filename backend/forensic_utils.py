@@ -8,10 +8,18 @@ no external C-extensions, fully compatible across all platforms and Python 3.14)
 """
 
 import io
+import re
 import hashlib
 import numpy as np
 import soundfile as sf
 from datetime import datetime, timezone
+
+try:
+    from fpdf import FPDF
+    FPDF_AVAILABLE = True
+except ImportError:
+    FPDF = object
+    FPDF_AVAILABLE = False
 
 
 def compute_file_hashes(content: bytes) -> dict:
@@ -485,3 +493,197 @@ def generate_forensic_html_report(result: dict, user_tz_name: str = None) -> str
 </body>
 </html>"""
     return html
+
+
+class CyberComplaintPDF(FPDF):
+    """Custom PDF document with professional header, footer, and borders."""
+    def header(self):
+        self.set_font("Helvetica", "B", 13)
+        self.cell(0, 7, "OFFICIAL CYBER CRIME COMPLAINT & EVIDENTIARY AFFIDAVIT", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 5, "Submitted under Section 66D & 65B of the Information Technology Act / Electronic Evidence Submission", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.ln(2)
+        self.set_draw_color(50, 150, 100)
+        self.set_line_width(0.6)
+        self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+        self.ln(4)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(120, 120, 120)
+        self.cell(0, 10, f"Page {self.page_no()}/{{nb}}  ·  AudioArtifact Digital Forensics Suite v2.0", align="C")
+
+
+def _sanitize_pdf_text(text: str) -> str:
+    """Sanitizes text and converts unicode symbols/emojis to clean Latin-1 safe characters."""
+    if not text:
+        return ""
+    # Strip emojis and 4-byte unicode characters
+    text = re.sub(r"[\U00010000-\U0010ffff]", "", text)
+    # Common typography and currency replacements
+    replacements = {
+        "—": "-", "–": "-", "“": '"', "”": '"', "’": "'", "‘": "'",
+        "•": "*", "…": "...", "→": "->", "←": "<-", "₹": "Rs.", "€": "EUR", "£": "GBP",
+        "§": "Sec.", "©": "(c)", "®": "(R)", "™": "(TM)", "°": " deg "
+    }
+    for orig, rep in replacements.items():
+        text = text.replace(orig, rep)
+    # Convert remaining non-latin1 characters to ascii approximations
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def build_police_complaint_pdf(
+    complaint_text: str,
+    filename: str,
+    hashes: dict,
+    verdict: str,
+    fake_ratio: float = 0.0,
+    user_tz_name: str = None,
+) -> bytes:
+    """
+    Builds a court-ready, printable Cyber Crime Police Complaint & Affidavit in PDF format.
+    Includes cryptographic chain of custody, SHA-256 hash, forensic verdict, and Section 65B verification.
+    """
+    if not FPDF_AVAILABLE:
+        raise RuntimeError("fpdf2 is not installed. Please run 'pip install fpdf2'.")
+
+    pdf = CyberComplaintPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    # Determine report timestamp
+    now_utc = datetime.now(timezone.utc)
+    ts_str = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    if user_tz_name:
+        try:
+            import zoneinfo
+            tz_obj = zoneinfo.ZoneInfo(user_tz_name)
+            local_dt = now_utc.astimezone(tz_obj)
+            ts_str = local_dt.strftime("%Y-%m-%d %I:%M:%S %p") + f" ({user_tz_name})"
+        except Exception:
+            pass
+
+    # Metadata Evidence Box
+    box_w = pdf.epw
+    pdf.set_x(pdf.l_margin)
+    pdf.set_fill_color(245, 247, 245)
+    pdf.set_draw_color(200, 215, 205)
+    pdf.set_line_width(0.3)
+    pdf.rect(pdf.l_margin, pdf.get_y(), box_w, 28, style="DF")
+
+    pdf.set_xy(pdf.l_margin + 4, pdf.get_y() + 3)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(35, 5, "Target Evidence File:", align="L")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, _sanitize_pdf_text(filename), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin + 4)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(35, 5, "Forensic Verdict:", align="L")
+    pdf.set_font("Helvetica", "B", 9)
+    if fake_ratio >= 50 or "Synthetic" in str(verdict) or "Spliced" in str(verdict):
+        pdf.set_text_color(180, 40, 40)
+    else:
+        pdf.set_text_color(30, 130, 70)
+    pdf.cell(0, 5, f"{_sanitize_pdf_text(str(verdict))} ({fake_ratio}% Synthetic Glitches)", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin + 4)
+    pdf.set_text_color(40, 40, 40)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(35, 5, "SHA-256 Checksum:", align="L")
+    pdf.set_font("Courier", "", 8)
+    pdf.cell(0, 5, _sanitize_pdf_text(hashes.get("sha256", "N/A")), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin + 4)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(35, 5, "Generated At:", align="L")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 5, _sanitize_pdf_text(ts_str), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin)
+    pdf.ln(7)
+
+    # Complaint Body Lines
+    lines = complaint_text.split("\n")
+    for raw_line in lines:
+        line = _sanitize_pdf_text(raw_line.strip())
+        if not line:
+            pdf.ln(2.5)
+            continue
+
+        pdf.set_x(pdf.l_margin)
+        try:
+            # Heading 1 (#)
+            if line.startswith("# "):
+                pdf.ln(2.5)
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_text_color(20, 40, 30)
+                pdf.multi_cell(pdf.epw, 5.5, line[2:].strip(), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
+            # Heading 2 (##)
+            elif line.startswith("## "):
+                pdf.ln(2)
+                pdf.set_font("Helvetica", "B", 10.5)
+                pdf.set_text_color(30, 50, 40)
+                pdf.multi_cell(pdf.epw, 5, line[3:].strip(), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(0.5)
+            # Heading 3 (###)
+            elif line.startswith("### "):
+                pdf.ln(1)
+                pdf.set_font("Helvetica", "B", 9.5)
+                pdf.set_text_color(40, 60, 50)
+                pdf.multi_cell(pdf.epw, 4.5, line[4:].strip(), new_x="LMARGIN", new_y="NEXT")
+            # Bullet list item
+            elif line.startswith("- ") or line.startswith("* "):
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(30, 30, 30)
+                clean_item = re.sub(r"\*\*(.*?)\*\*", r"\1", line[2:].strip())
+                pdf.set_x(pdf.l_margin + 4)
+                pdf.multi_cell(pdf.epw - 4, 4.8, f"> {clean_item}", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(30, 30, 30)
+                clean_p = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+                pdf.multi_cell(pdf.epw, 4.8, clean_p, new_x="LMARGIN", new_y="NEXT")
+        except Exception:
+            pdf.set_x(pdf.l_margin)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.multi_cell(pdf.epw, 4.8, line[:120], new_x="LMARGIN", new_y="NEXT")
+
+    # Legal Declaration & Verification Block
+    pdf.ln(6)
+    if pdf.get_y() > 230:
+        pdf.add_page()
+
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(20, 20, 20)
+    pdf.cell(0, 5, "VERIFICATION & LEGAL DECLARATION", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "", 8.2)
+    pdf.set_text_color(80, 80, 80)
+    decl = (
+        "I hereby verify that the details stated in this complaint and forensic evidence brief are true and correct "
+        "to the best of my knowledge and technical evaluation. The attached digital recording's cryptographic hash (SHA-256) "
+        "has been permanently cataloged to guarantee chain of custody and prevent tampering under Section 65B of the Indian Evidence Act."
+    )
+    pdf.multi_cell(pdf.epw, 4.2, decl, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(7)
+
+    # Signature and Date fields with half width
+    half_w = pdf.epw / 2
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(half_w, 5, "Complainant / Investigating Officer Signature:", align="L")
+    pdf.cell(half_w, 5, "Date & Place:", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(half_w, 5, "________________________________________", align="L")
+    pdf.cell(half_w, 5, "____________________", align="R", new_x="LMARGIN", new_y="NEXT")
+
+    return bytes(pdf.output())

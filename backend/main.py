@@ -41,7 +41,9 @@ import librosa
 import numpy as np
 import torch
 from transformers import AutoFeatureExtractor, AutoModel
-from fastapi import FastAPI, UploadFile, File
+import json
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -55,6 +57,12 @@ from forensic_utils import (  # noqa: E402
     compute_speaker_similarity,
     generate_forensic_html_report,
     slice_segment_audio_bytes,
+)
+from ai_copilot import (  # noqa: E402
+    generate_forensic_explanation,
+    assess_scam_threat,
+    chat_with_audio_copilot,
+    is_genai_installed,
 )
 
 
@@ -456,6 +464,59 @@ def root():
         "vad": "Silero VAD active",
         "window_sec": WINDOW_SEC,
         "stride_sec": STRIDE_SEC,
+        "genai_installed": is_genai_installed(),
     }
+
+
+@app.post("/ai/explain")
+async def ai_explain(
+    file: Optional[UploadFile] = File(None),
+    analysis: str = Form(...),
+    language: str = Form("English"),
+    api_key: Optional[str] = Form(None),
+):
+    try:
+        analysis_dict = json.loads(analysis) if isinstance(analysis, str) else analysis
+    except Exception:
+        analysis_dict = {}
+    audio_bytes = await file.read() if file else None
+    fname = file.filename if file else analysis_dict.get("filename", "audio.wav")
+    return generate_forensic_explanation(audio_bytes, fname, analysis_dict, language=language, api_key=api_key)
+
+
+@app.post("/ai/threat_assessment")
+async def ai_threat(
+    file: Optional[UploadFile] = File(None),
+    analysis: str = Form(...),
+    api_key: Optional[str] = Form(None),
+):
+    try:
+        analysis_dict = json.loads(analysis) if isinstance(analysis, str) else analysis
+    except Exception:
+        analysis_dict = {}
+    audio_bytes = await file.read() if file else None
+    fname = file.filename if file else analysis_dict.get("filename", "audio.wav")
+    return assess_scam_threat(audio_bytes, fname, analysis_dict, api_key=api_key)
+
+
+@app.post("/ai/chat")
+async def ai_chat(
+    file: Optional[UploadFile] = File(None),
+    query: str = Form(...),
+    analysis: str = Form(...),
+    chat_history: Optional[str] = Form(None),
+    api_key: Optional[str] = Form(None),
+):
+    try:
+        analysis_dict = json.loads(analysis) if isinstance(analysis, str) else analysis
+    except Exception:
+        analysis_dict = {}
+    try:
+        history_list = json.loads(chat_history) if chat_history else None
+    except Exception:
+        history_list = None
+    audio_bytes = await file.read() if file else None
+    fname = file.filename if file else analysis_dict.get("filename", "audio.wav")
+    return chat_with_audio_copilot(audio_bytes, fname, query, analysis_dict, chat_history=history_list, api_key=api_key)
 
 

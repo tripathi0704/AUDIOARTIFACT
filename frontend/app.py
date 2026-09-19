@@ -54,6 +54,15 @@ if project_root not in sys.path:
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
+# Hot-reload backend modules so running Streamlit servers immediately pick up edits without restart
+import importlib
+for _mod_name in ["backend.forensic_utils", "backend.ai_copilot", "backend.main"]:
+    if _mod_name in sys.modules:
+        try:
+            importlib.reload(sys.modules[_mod_name])
+        except Exception:
+            pass
+
 from backend.main import (
     analyze_audio_data,
     extract_speaker_embedding_vector,
@@ -65,9 +74,41 @@ from backend.forensic_utils import (
     slice_segment_audio_bytes,
     compute_file_hashes,
     compute_acoustic_forensics,
+    build_police_complaint_pdf,
+)
+from backend.ai_copilot import (
+    generate_forensic_explanation,
+    assess_scam_threat,
+    chat_with_audio_copilot,
+    is_genai_installed,
 )
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
+
+def get_active_gemini_api_key() -> str:
+    """Resolves Gemini API key with priority: UI input > st.secrets > os.environ > .env."""
+    user_key = st.session_state.get("custom_gemini_api_key", "").strip()
+    if user_key:
+        return user_key
+    try:
+        if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
+            return str(st.secrets["GEMINI_API_KEY"]).strip()
+    except Exception:
+        pass
+    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    env_file = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("GEMINI_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return ""
 
 
 def is_local_backend_active(port: int = 8000) -> bool:
@@ -580,6 +621,39 @@ st.markdown(f"""
 
 
 # ----------------------------------------------------------------------
+# SIDEBAR CONFIGURATION (AI COPILOT & CLIENT PREFERENCES)
+# ----------------------------------------------------------------------
+with st.sidebar:
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-weight:700;font-size:14px;color:#ECEFEB;margin-bottom:12px;">◈ FORENSIC ENGINE CONFIG</div>', unsafe_allow_html=True)
+    
+    with st.expander("🤖 Gemini AI Copilot Settings", expanded=True):
+        active_gemini_key = get_active_gemini_api_key()
+        if active_gemini_key:
+            st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#3ECF8E;background:rgba(62,207,142,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(62,207,142,0.25);margin-bottom:10px;">🟢 Gemini 3.6 Flash Connected</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#FFB454;background:rgba(255,180,84,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(255,180,84,0.25);margin-bottom:10px;">⚪ API Key Optional / Not Set</div>', unsafe_allow_html=True)
+
+        user_input_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state.get("custom_gemini_api_key", ""),
+            type="password",
+            placeholder="Paste AI Studio API Key...",
+            help="Required for Explainable AI (XAI), Threat Intent Analysis, and Copilot Chat. Free at aistudio.google.com",
+            key="input_custom_gemini_key",
+        )
+        if user_input_key != st.session_state.get("custom_gemini_api_key", ""):
+            st.session_state["custom_gemini_api_key"] = user_input_key
+            st.rerun()
+
+        st.markdown(
+            """<div style="font-size:11px;color:#8C958E;margin-top:8px;line-height:1.4;">
+            Get a free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#3ECF8E;text-decoration:none;">Google AI Studio</a>.<br/>
+            On Streamlit Cloud, you can also add <code>GEMINI_API_KEY</code> in Secrets.
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+# ----------------------------------------------------------------------
 # TOP NAVIGATION TABS & REDIRECTION CONTROLLER
 # ----------------------------------------------------------------------
 TAB_TITLES = [
@@ -996,6 +1070,216 @@ with tab_single:
                 height=380,
             )
             st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
+
+        # ----------------------------------------------------------------------
+        # ◈ GEMINI AI FORENSIC INTELLIGENCE & COPILOT SUITE
+        # ----------------------------------------------------------------------
+        st.markdown('<div class="section-label" style="margin-top:35px;">◈ Gemini AI Forensic Intelligence & Copilot</div>', unsafe_allow_html=True)
+
+        gemini_key = get_active_gemini_api_key()
+        has_key = bool(gemini_key)
+
+        status_tag = (
+            '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#3ECF8E;background:rgba(62,207,142,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(62,207,142,0.3);">● AI ENGINE READY</span>'
+            if has_key
+            else '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#FFB454;background:rgba(255,180,84,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(255,180,84,0.3);">○ API KEY REQUIRED</span>'
+        )
+
+        st.markdown(f"""
+        <div style="background:#111513;border:1px solid #232B25;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:15px;color:#ECEFEB;display:flex;align-items:center;gap:8px;">
+                <span style="color:#5EEAD4;">🤖</span> Multimodal Forensic Reasoning & Threat Intel
+              </div>
+              <div style="font-size:12px;color:#8C958E;margin-top:3px;">
+                Correlates WavLM deep acoustic anomalies with speech semantics using Google Gemini 3.6 Flash.
+              </div>
+            </div>
+            <div>
+              {status_tag}
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if not has_key:
+            st.info("💡 **Enable Next-Gen AI Insights**: Enter your free Gemini API Key below to unlock **AI Forensic Explanations**, **Scam Threat Intent Detection**, and the **Interactive Audio Copilot**.")
+            c_key_in, c_key_btn = st.columns([3, 1])
+            with c_key_in:
+                direct_key_input = st.text_input(
+                    "Paste Gemini API Key",
+                    type="password",
+                    placeholder="Paste your Gemini API key (AIzaSy...)",
+                    key="direct_gemini_key_input",
+                    label_visibility="collapsed",
+                )
+            with c_key_btn:
+                if st.button("Connect AI Engine", key="btn_connect_gemini", type="primary", use_container_width=True):
+                    if direct_key_input.strip():
+                        st.session_state["custom_gemini_api_key"] = direct_key_input.strip()
+                        st.rerun()
+                    else:
+                        st.warning("Please enter an API key.")
+            st.markdown(
+                """<div style="font-size:12px;color:#8C958E;margin-top:4px;margin-bottom:15px;">
+                Don't have a key? Get one 100% free in 30 seconds at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#3ECF8E;text-decoration:none;font-weight:600;">Google AI Studio ↗</a> (No credit card required).
+                </div>""",
+                unsafe_allow_html=True
+            )
+        else:
+            sub_ai_tab1, sub_ai_tab2, sub_ai_tab3 = st.tabs([
+                "📝 Forensic Reasoning (XAI)",
+                "🚨 Scam & Threat Intent",
+                "💬 Interactive Copilot Chat"
+            ])
+
+            with sub_ai_tab1:
+                st.markdown('<div style="font-size:13px;color:#8C958E;margin-bottom:12px;">Generates an authoritative, plain-language forensic briefing explaining the spectral rolloff, pitch micro-inflections, and vocoder artifacts.</div>', unsafe_allow_html=True)
+                col_lang, col_btn = st.columns([1, 2])
+                with col_lang:
+                    lang_choice = st.selectbox("Briefing Language", ["English", "Hindi / Hinglish"], key="ai_lang_select")
+                with col_btn:
+                    st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                    gen_xai_clicked = st.button("◈ Generate Forensic Reasoning Report", key="btn_gen_xai", type="primary")
+
+                if gen_xai_clicked:
+                    with st.spinner("Gemini is synthesizing forensic acoustic vectors & vocoder signatures..."):
+                        fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
+                        xai_res = generate_forensic_explanation(
+                            audio_bytes=audio_bytes,
+                            filename=fname,
+                            analysis=data,
+                            language=lang_choice,
+                            api_key=gemini_key,
+                        )
+                        if xai_res.get("success"):
+                            st.session_state["xai_report"] = xai_res.get("explanation", "")
+                        else:
+                            st.error(xai_res.get("error", "Failed to generate report."))
+
+                if "xai_report" in st.session_state and st.session_state["xai_report"]:
+                    st.markdown(f"""
+                    <div style="background:#0D110E;border:1px solid rgba(62,207,142,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#ECEFEB;line-height:1.6;">
+                    {st.session_state['xai_report']}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    st.download_button(
+                        label="⬇️ Download AI Forensic Brief (.md)",
+                        data=st.session_state["xai_report"],
+                        file_name=f"Forensic_AI_Brief_{st.session_state.get('analyzed_file_name', 'audio')}.md",
+                        mime="text/markdown",
+                        key="btn_dl_xai"
+                    )
+
+            with sub_ai_tab2:
+                st.markdown('<div style="font-size:13px;color:#8C958E;margin-bottom:12px;">Transcribes spoken speech and performs semantic fraud detection (financial urgency, impersonation extortion, CEO fraud, family distress scams).</div>', unsafe_allow_html=True)
+                if st.button("🚨 Run Semantic Scam & Threat Assessment", key="btn_run_threat", type="primary"):
+                    with st.spinner("Transcribing speech and screening for social engineering / scam vectors..."):
+                        fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
+                        threat_res = assess_scam_threat(
+                            audio_bytes=audio_bytes,
+                            filename=fname,
+                            analysis=data,
+                            api_key=gemini_key,
+                        )
+                        if threat_res.get("success"):
+                            st.session_state["threat_report"] = threat_res.get("assessment", "")
+                        else:
+                            st.error(threat_res.get("error", "Failed to assess threat."))
+
+                if "threat_report" in st.session_state and st.session_state["threat_report"]:
+                    st.markdown(f"""
+                    <div style="background:#140F0E;border:1px solid rgba(255,87,87,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#ECEFEB;line-height:1.6;">
+                    {st.session_state['threat_report']}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            with sub_ai_tab3:
+                st.markdown('<div style="font-size:13px;color:#8C958E;margin-bottom:10px;">Chat with your audio recording. Ask specific questions, investigate anomalous frames, or draft an official Cyber Crime FIR / Court Affidavit.</div>', unsafe_allow_html=True)
+                
+                # Pre-built quick action prompt buttons
+                q1, q2, q3 = st.columns(3)
+                quick_query = None
+                with q1:
+                    if st.button("🔍 Explain Suspect Glitches", use_container_width=True, key="quick_q1"):
+                        quick_query = "Please explain the highest-risk suspect window in this audio, what acoustic anomalies were triggered, and why."
+                with q2:
+                    if st.button("⚖️ Draft Police Cyber Complaint", use_container_width=True, key="quick_q2"):
+                        quick_query = "Draft a formal, court-ready Cyber Crime Investigation Affidavit and Police Complaint for this deepfake audio recording, citing the SHA-256 hash and timestamps."
+                with q3:
+                    if st.button("🛡️ Recommended Investigation Steps", use_container_width=True, key="quick_q3"):
+                        quick_query = "What forensic counter-verification steps and chain-of-custody protocols should be followed next for this audio?"
+
+                if "copilot_chat_history" not in st.session_state:
+                    st.session_state["copilot_chat_history"] = []
+
+                # Render existing chat
+                for idx, msg in enumerate(st.session_state["copilot_chat_history"]):
+                    if msg["role"] == "user":
+                        st.markdown(f"""
+                        <div style="background:#1A231E;border-left:3px solid #5EEAD4;padding:10px 14px;border-radius:6px;margin:8px 0;">
+                          <b style="color:#5EEAD4;font-size:12px;font-family:'IBM Plex Mono',monospace;">INVESTIGATOR:</b>
+                          <div style="color:#ECEFEB;margin-top:4px;font-size:13.5px;">{msg['content']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style="background:#111513;border-left:3px solid #3ECF8E;padding:12px 16px;border-radius:6px;margin:8px 0;">
+                          <b style="color:#3ECF8E;font-size:12px;font-family:'IBM Plex Mono',monospace;">FORENSIC COPILOT:</b>
+                          <div style="color:#ECEFEB;margin-top:4px;font-size:13.5px;line-height:1.5;">{msg['content']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Check if message is a Cyber Crime Complaint or Legal Affidavit
+                        is_complaint = any(term in msg['content'].lower() for term in ["complaint", "affidavit", "information technology act", "cyber crime police", "station house officer", "police complaint"])
+                        if is_complaint:
+                            try:
+                                import importlib
+                                import backend.forensic_utils as fu
+                                importlib.reload(fu)
+                                pdf_bytes = fu.build_police_complaint_pdf(
+                                    complaint_text=msg['content'],
+                                    filename=st.session_state.get("analyzed_file_name", data.get("filename", "audio.wav")),
+                                    hashes=data.get("file_hashes", {}),
+                                    verdict=data.get("verdict", "Unknown"),
+                                    fake_ratio=data.get("fake_ratio", 0.0),
+                                    user_tz_name=user_tz_name,
+                                )
+                                fname_base = os.path.splitext(st.session_state.get('analyzed_file_name', 'audio'))[0]
+                                st.download_button(
+                                    label="📄 Download Official Police Complaint & FIR Affidavit (PDF)",
+                                    data=pdf_bytes,
+                                    file_name=f"Cyber_Crime_Complaint_{fname_base}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_pdf_complaint_{idx}",
+                                    type="primary",
+                                    use_container_width=True,
+                                    help="Download court-ready, printable PDF complaint with cryptographic SHA-256 chain of custody."
+                                )
+                            except Exception as e:
+                                st.error(f"Could not render PDF: {e}")
+
+                user_input = st.chat_input("Ask the Forensic AI Copilot about this audio recording...", key="chat_copilot_input")
+                active_query = quick_query or user_input
+
+                if active_query:
+                    st.session_state["copilot_chat_history"].append({"role": "user", "content": active_query})
+                    with st.spinner("AI Copilot is analyzing query and audio context..."):
+                        fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
+                        chat_res = chat_with_audio_copilot(
+                            audio_bytes=audio_bytes,
+                            filename=fname,
+                            user_query=active_query,
+                            analysis=data,
+                            chat_history=st.session_state["copilot_chat_history"],
+                            api_key=gemini_key,
+                        )
+                        if chat_res.get("success"):
+                            st.session_state["copilot_chat_history"].append({"role": "assistant", "content": chat_res.get("response", "")})
+                            st.rerun()
+                        else:
+                            st.error(chat_res.get("error", "Copilot response failed."))
 
 
 # ======================================================================

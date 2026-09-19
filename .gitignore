@@ -20,10 +20,12 @@ env/
 *.sqlite
 *.sqlite3
 
-# Environment variables
+# Environment variables & Secrets
 .env
 .env.local
 .env.*
+.streamlit/secrets.toml
+.streamlit/
 
 # IDE & Editor
 .vscode/

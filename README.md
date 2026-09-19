@@ -17,6 +17,10 @@ AudioArtifact is an advanced timeline-based forensic system for detecting and lo
 3. **👥 Speaker Clone / Voiceprint Matcher**: WavLM 768-dim cosine similarity cross-matching between a Reference Voice and a Suspect Audio to detect impersonation and voice cloning attacks.
 4. **📁 Batch Forensic Scanner**: Multi-file bulk processing, progress tracking, and CSV audit export.
 5. **📜 Session History & Audit Log**: Searchable, filterable scan records with 1-click re-inspection and CSV logs.
+6. **🤖 Gemini AI Forensic Copilot & Threat Intelligence**:
+   - **Explainable AI (XAI) Briefings**: Plain-language acoustic & vocoder breakdown (English & Hindi/Hinglish).
+   - **Scam & Coercion Threat Intent**: Speech transcription and semantic screening for financial extortion, impersonation, and family emergency scams.
+   - **Interactive Audio Copilot**: Real-time Q&A with the recording and 1-click court-ready Cyber Crime Police Complaint / Legal Affidavit drafting.
 
 
 ---
