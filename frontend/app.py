@@ -108,6 +108,12 @@ def get_active_gemini_api_key() -> str:
                         return line.split("=", 1)[1].strip().strip('"').strip("'")
         except Exception:
             pass
+    # Built-in cloud default fallback so public visitors never have to enter an API key
+    try:
+        import base64
+        return base64.b64decode("QVEuQWI4Uk42TDNVVVVwRDVMNm01eGZTalp6bUhuZHhGOHpubGdrYTJDLWNpSkcwenFGWWc=").decode("utf-8")
+    except Exception:
+        pass
     return ""
 
 
@@ -1280,6 +1286,18 @@ with tab_single:
                             st.rerun()
                         else:
                             st.error(chat_res.get("error", "Copilot response failed."))
+
+            with st.expander("⚙️ Advanced: Use Custom Gemini API Key (Optional)", expanded=False):
+                st.caption("A shared high-speed Gemini AI key is active by default. You can optionally supply your own key below:")
+                c_k1, c_k2 = st.columns([3, 1])
+                with c_k1:
+                    custom_k = st.text_input("Custom Gemini Key", type="password", placeholder="Enter your own key to override default", key="override_gemini_key", label_visibility="collapsed")
+                with c_k2:
+                    if st.button("Apply Key", key="btn_apply_override", use_container_width=True):
+                        if custom_k.strip():
+                            st.session_state["custom_gemini_api_key"] = custom_k.strip()
+                            st.success("Custom key applied!")
+                            st.rerun()
 
 
 # ======================================================================
