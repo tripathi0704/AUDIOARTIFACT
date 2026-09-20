@@ -24,50 +24,33 @@ except ImportError:
 import time
 
 FALLBACK_MODELS = [
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
-    "gemini-flash-latest",
+    "gemini-3.7-flash",
 ]
 DEFAULT_MODEL = FALLBACK_MODELS[0]
 
 
 def _generate_with_fallback(client, contents, config=None):
     """
-    Attempts content generation across candidate models sequentially with automatic failover.
+    Attempts content generation across high-speed candidate models sequentially with zero-latency failover.
     Gracefully handles upstream 503 high-demand spikes, 429 rate limits, and model deprecations.
     """
     last_err = None
     for model_name in FALLBACK_MODELS:
-        # Up to 2 attempts per model in case of a momentary network blip
-        for attempt in range(2):
-            try:
-                res = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-                return res, model_name
-            except Exception as e:
-                last_err = e
-                err_str = str(e).lower()
-                # If high demand, unavailable, rate limited, or not found, proceed to next candidate
-                is_transient = any(term in err_str for term in [
-                    "503", "unavailable", "high demand", "temporary", "temporarily",
-                    "429", "resource_exhausted", "quota", "rate limit",
-                    "404", "not_found", "not found", "no longer available",
-                    "500", "504", "deadline", "timeout", "overloaded"
-                ])
-                if is_transient:
-                    time.sleep(0.6 * (attempt + 1))
-                    if attempt == 1:
-                        # Move on to the next candidate model
-                        break
-                    continue
-                else:
-                    # Other unknown exception, try next candidate model
-                    time.sleep(0.5)
-                    break
+        try:
+            res = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            return res, model_name
+        except Exception as e:
+            last_err = e
+            # Immediately try next high-speed model without wasting time on dead models
+            continue
 
     raise last_err or RuntimeError("No compatible Gemini model found.")
 
@@ -336,14 +319,30 @@ USER INQUIRY:
 
 INSTRUCTIONS:
 - Answer the user's inquiry directly, accurately, and professionally.
-- If asked to draft a legal affidavit or police cyber-cell complaint, generate a formal, court-ready document incorporating the SHA-256 hash, timestamps, and findings.
+- GROUNDING & ANTI-HALLUCINATION RULES (CRITICAL):
+  * Listen to the actual audio waveform provided. You must base your findings on what is ACTUALLY present in the sound.
+  * NON-VOCAL / INSTRUMENTAL / SILENCE HANDLING:
+    If the audio contains NO human speech or spoken dialogue (e.g., it is purely musical instruments like Veena, Sitar, Guitar, Piano, flute, synthetic music, tone beeps, noise, or silence), you MUST EXPLICITLY state:
+    "No human voice or spoken dialogue was detected in this audio recording. The recording consists entirely of instrumental music / acoustic sound (e.g., Veena / musical instrument). Since there is no spoken language, no linguistic transcription or translation is possible."
+  * NEVER invent, guess, or hallucinate a fictional scam call, dialogue, or spoken words when no human is speaking.
+  * When explaining why musical instruments (like Veena) trigger high synthetic/anomaly scores, clarify that deepfake speech classifiers (WavLM) are trained strictly on human biological vocal tracts (vocal formants, breathing, glottal pulses). Non-vocal instruments have unnatural pitch stability, sharp harmonics, and absence of human vocal resonances, which can cause speech-specific models to flag them as anomalous.
+  * If the audio DOES contain human speech, transcribe and translate ONLY the exact, verbatim words spoken in the audio.
+- If asked to draft a legal complaint or police cyber-cell FIR petition:
+  * Draft it as a formal, court-ready criminal complaint addressed to the Station House Officer (SHO), Cyber Crime Police Station under Section 173 BNSS, 2023 [Sec. 154 CrPC].
+  * Invoke exact statutory provisions: Sections 66D, 66E of the IT Act, 2000 r/w Sections 318(4), 319(2), 336(3), 340(2) of Bharatiya Nyaya Sanhita (BNS), 2023 [IPC 419, 420, 468, 471] and Section 63 BSA, 2023 [Sec. 65B Evidence Act].
+  * Include a clear Chronological Statement of Facts, Modus Operandi of generative AI voice cloning, certified SHA-256 hash, and anomalous timestamp interval.
+  * List formal investigation prayers: FIR registration, preservation of CDR/IPDR under Sec 94 BNSS / 91 CrPC, seizure & FSL dispatch, and emergency takedown.
+  * Never leave awkward bracketed placeholders like [Insert Your Name] or [Phone Number] - use clean official blanks '........................................' so the document is completely turnkey, direct-printable, and requires no lawyer review.
 - Keep responses well-structured with Markdown.
 """
 
     contents = []
-    audio_part = _prepare_audio_part(audio_bytes, filename)
-    if audio_part is not None:
-        contents.append(audio_part)
+    # Always attach the audio waveform if available and under 20MB so Gemini can listen to the actual sound
+    # (whether human speech, Veena/instrumental music, ambient sound, or silence) and ground its answer in acoustic reality.
+    if audio_bytes and len(audio_bytes) < 20 * 1024 * 1024:
+        audio_part = _prepare_audio_part(audio_bytes, filename)
+        if audio_part is not None:
+            contents.append(audio_part)
 
     # Append brief chat history if provided
     if chat_history:

@@ -635,7 +635,7 @@ with st.sidebar:
     with st.expander("🤖 Gemini AI Copilot Settings", expanded=True):
         active_gemini_key = get_active_gemini_api_key()
         if active_gemini_key:
-            st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#3ECF8E;background:rgba(62,207,142,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(62,207,142,0.25);margin-bottom:10px;">🟢 Gemini 3.6 Flash Connected</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#3ECF8E;background:rgba(62,207,142,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(62,207,142,0.25);margin-bottom:10px;">🟢 Gemini Ultra-Fast Flash Engine Connected</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#FFB454;background:rgba(255,180,84,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(255,180,84,0.25);margin-bottom:10px;">⚪ API Key Optional / Not Set</div>', unsafe_allow_html=True)
 
@@ -714,6 +714,221 @@ def execute_forensic_scan(file_bytes: bytes, filename: str) -> dict:
         data = analyze_audio_data(file_bytes, filename)
 
     return data
+
+
+# ----------------------------------------------------------------------
+# DEDICATED FORENSIC AI COPILOT DIALOG & ISOLATED SESSION CHAT HISTORY
+# ----------------------------------------------------------------------
+def get_file_unique_key(analysis_data: dict, filename: str) -> str:
+    """Returns a unique, persistent session key for an audio file based on SHA-256 hash or filename."""
+    if analysis_data and isinstance(analysis_data, dict):
+        hashes = analysis_data.get("file_hashes") or {}
+        sha = hashes.get("sha256")
+        if sha:
+            return f"sha256_{sha[:20]}"
+    clean_name = os.path.basename(filename or "unknown").strip().lower()
+    return f"file_{clean_name}"
+
+
+def get_file_chat_history(file_key: str) -> list:
+    """Retrieves or initializes the isolated chat history for an audio file."""
+    if "file_chat_histories" not in st.session_state:
+        st.session_state["file_chat_histories"] = {}
+    if file_key not in st.session_state["file_chat_histories"]:
+        st.session_state["file_chat_histories"][file_key] = []
+    return st.session_state["file_chat_histories"][file_key]
+
+
+def close_forensic_chat_dialog():
+    """Callback triggered when the dedicated forensic chat dialog is dismissed."""
+    st.session_state["active_chat_modal"] = None
+
+
+@st.dialog("💬 Forensic AI Copilot — Dedicated Investigation Chatbox", width="large", on_dismiss=close_forensic_chat_dialog)
+def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename: str, gemini_key: str):
+    """Renders a dedicated, high-resolution forensic investigation chat modal dialog."""
+    file_key = get_file_unique_key(analysis_data, filename)
+    chat_history = get_file_chat_history(file_key)
+
+    v = (analysis_data or {}).get("verdict", "Analysis Pending")
+    fake_ratio = (analysis_data or {}).get("fake_ratio", 0.0)
+    hashes = (analysis_data or {}).get("file_hashes", {})
+    sha = hashes.get("sha256", "")
+    sha_short = (sha[:14] + "..." + sha[-6:]) if len(sha) > 20 else (sha or "N/A")
+    col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
+
+    # Process auto_query if invoked via 1-click shortcut
+    modal_info = st.session_state.get("active_chat_modal")
+    if isinstance(modal_info, dict) and modal_info.get("auto_query"):
+        auto_q = modal_info.pop("auto_query")
+        chat_history.append({"role": "user", "content": auto_q})
+        st.session_state["copilot_chat_history"] = chat_history
+        with st.spinner("AI Copilot is processing forensic request..."):
+            chat_res = chat_with_audio_copilot(
+                audio_bytes=audio_bytes,
+                filename=filename,
+                user_query=auto_q,
+                analysis=analysis_data,
+                chat_history=chat_history,
+                api_key=gemini_key,
+            )
+            if chat_res.get("success"):
+                chat_history.append({"role": "assistant", "content": chat_res.get("response", "")})
+                st.session_state["copilot_chat_history"] = chat_history
+            else:
+                st.error(chat_res.get("error", "Copilot response failed."))
+
+    # Modal Header Card
+    col_hdr_info, col_hdr_actions = st.columns([3.2, 1.2])
+    with col_hdr_info:
+        st.markdown(f"""
+        <div style="background:#131614;border:1px solid #262B27;border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;color:#ECEFEB;">📁 {filename}</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:2px;">
+                SHA-256: <code style="color:#5EEAD4;background:#1A231E;padding:2px 6px;border-radius:4px;">{sha_short}</code>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:700;color:{col_v};background:#1A1E1B;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);">
+                {v}
+              </span>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;margin-top:3px;">
+                Synthetic: <b style="color:#ECEFEB;">{fake_ratio:.1f}%</b>
+              </div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_hdr_actions:
+        st.write("")
+        c_act_clear, c_act_close = st.columns(2)
+        with c_act_clear:
+            if st.button("🗑️ Clear", key=f"dlg_clear_{file_key}", use_container_width=True, help="Clear chat history for this file"):
+                st.session_state["file_chat_histories"][file_key] = []
+                st.session_state["copilot_chat_history"] = []
+                st.rerun()
+        with c_act_close:
+            if st.button("✖ Close", key=f"dlg_close_{file_key}", use_container_width=True, help="Close investigation modal"):
+                st.session_state["active_chat_modal"] = None
+                st.rerun()
+
+    # Pre-built quick action prompt buttons
+    st.markdown('<div style="font-size:12px;font-family:\'IBM Plex Mono\',monospace;color:#8C958E;margin-bottom:6px;">QUICK FORENSIC PROMPTS:</div>', unsafe_allow_html=True)
+    q1, q2, q3 = st.columns(3)
+    quick_query = None
+    with q1:
+        if st.button("🔍 Explain Suspect Glitches", use_container_width=True, key=f"dlg_q1_{file_key}"):
+            quick_query = "Please explain the highest-risk suspect window in this audio, what acoustic anomalies were triggered, and why."
+    with q2:
+        if st.button("⚖️ Draft Police Cyber Complaint", use_container_width=True, key=f"dlg_q2_{file_key}"):
+            quick_query = "Draft an official, court-ready Cyber Crime Police Complaint (FIR Petition) under Section 173 BNSS / 154 CrPC and Section 66D IT Act for this deepfake audio recording, citing the SHA-256 hash and timestamps."
+    with q3:
+        if st.button("🛡️ Investigation Protocol", use_container_width=True, key=f"dlg_q3_{file_key}"):
+            quick_query = "What forensic counter-verification steps and chain-of-custody protocols should be followed next for this audio?"
+
+    # Message feed
+    if not chat_history:
+        st.markdown("""
+        <div style="background:#151A17;border:1px dashed #2E3830;border-radius:8px;padding:22px;text-align:center;color:#8C958E;margin:12px 0;">
+          <div style="font-size:24px;margin-bottom:4px;">🤖</div>
+          <div style="font-size:13.5px;font-weight:600;color:#ECEFEB;">Forensic AI Copilot Ready</div>
+          <div style="font-size:12px;margin-top:4px;">Ask specific questions, examine anomalous frames, or click one of the quick prompts above.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for idx, msg in enumerate(chat_history):
+            if msg["role"] == "user":
+                with st.chat_message("user", avatar="🕵️"):
+                    st.markdown('<b style="color:#5EEAD4;font-size:12px;font-family:\'IBM Plex Mono\',monospace;">INVESTIGATOR:</b>', unsafe_allow_html=True)
+                    st.markdown(msg['content'])
+            else:
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown('<b style="color:#3ECF8E;font-size:12px;font-family:\'IBM Plex Mono\',monospace;">FORENSIC COPILOT:</b>', unsafe_allow_html=True)
+                    st.markdown(msg['content'])
+
+                # Check if message is a Cyber Crime Complaint or Legal Affidavit
+                is_complaint = any(term in msg['content'].lower() for term in ["complaint", "affidavit", "information technology act", "cyber crime police", "station house officer", "police complaint"])
+                if is_complaint:
+                    try:
+                        # Optional Complainant Pre-fill Form (leave blank to sign by hand with pen)
+                        with st.expander("📝 Fill Complainant & Incident Details for 1-Click Print (Optional)", expanded=False):
+                            st.caption("ℹ️ Pre-fill your name, contact, and police station below to embed them directly into the PDF petition. You can also leave them blank and write them by hand after printing.")
+                            col_c1, col_c2 = st.columns(2)
+                            with col_c1:
+                                c_name = st.text_input("Complainant Full Name", key=f"c_name_dlg_{file_key}_{idx}", placeholder="e.g. Ramesh Kumar")
+                                c_phone = st.text_input("Complainant Mobile", key=f"c_phone_dlg_{file_key}_{idx}", placeholder="e.g. +91 98765 43210")
+                                c_addr = st.text_input("Residential Address", key=f"c_addr_dlg_{file_key}_{idx}", placeholder="e.g. Sector 18, Noida, Uttar Pradesh")
+                            with col_c2:
+                                c_ps = st.text_input("Police Station / Cyber Cell Name", key=f"c_ps_dlg_{file_key}_{idx}", placeholder="e.g. Cyber Crime PS, Sector 108")
+                                c_susp = st.text_input("Suspect Phone / WhatsApp / Handle", key=f"c_susp_dlg_{file_key}_{idx}", placeholder="e.g. +91 91234 56789 or @scammer_handle")
+                                c_date = st.text_input("Incident Date", key=f"c_date_dlg_{file_key}_{idx}", placeholder="e.g. 20-Sep-2026")
+
+                        import importlib
+                        import backend.forensic_utils as fu
+                        importlib.reload(fu)
+                        pdf_bytes = fu.build_police_complaint_pdf(
+                            complaint_text=msg['content'],
+                            filename=filename,
+                            hashes=hashes,
+                            verdict=v,
+                            fake_ratio=fake_ratio,
+                            user_tz_name=user_tz_name,
+                            complainant_name=c_name,
+                            complainant_phone=c_phone,
+                            complainant_address=c_addr,
+                            police_station=c_ps,
+                            suspect_info=c_susp,
+                            incident_date_str=c_date,
+                        )
+                        fname_base = os.path.splitext(filename)[0]
+                        st.download_button(
+                            label="📄 Download Official Court-Ready FIR Petition & Sec. 63 BSA Certificate (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"Official_Cyber_Complaint_{fname_base}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_pdf_dlg_{file_key}_{idx}",
+                            type="primary",
+                            use_container_width=True,
+                            help="100% turnkey court-ready petition with Section 63 BSA / 65B Evidence Act certificate. Print directly and submit without needing a lawyer."
+                        )
+                    except Exception as e:
+                        st.error(f"Could not render complaint PDF: {e}")
+
+    # Real-time chat input
+    user_input = st.chat_input("Ask the Forensic AI Copilot about this audio recording...", key=f"dlg_input_{file_key}")
+    active_query = quick_query or user_input
+
+    if active_query:
+        chat_history.append({"role": "user", "content": active_query})
+        st.session_state["copilot_chat_history"] = chat_history
+        with st.spinner("AI Copilot is analyzing query and audio context..."):
+            chat_res = chat_with_audio_copilot(
+                audio_bytes=audio_bytes,
+                filename=filename,
+                user_query=active_query,
+                analysis=analysis_data,
+                chat_history=chat_history,
+                api_key=gemini_key,
+            )
+            if chat_res.get("success"):
+                chat_history.append({"role": "assistant", "content": chat_res.get("response", "")})
+                st.session_state["copilot_chat_history"] = chat_history
+                st.rerun()
+            else:
+                st.error(chat_res.get("error", "Copilot response failed."))
+
+
+# Global trigger: open dedicated forensic chat modal if requested
+if st.session_state.get("active_chat_modal"):
+    modal_info = st.session_state["active_chat_modal"]
+    open_forensic_chat_dialog(
+        analysis_data=modal_info.get("data", {}),
+        audio_bytes=modal_info.get("audio_bytes", None),
+        filename=modal_info.get("filename", "recording.wav"),
+        gemini_key=modal_info.get("gemini_key") or get_active_gemini_api_key(),
+    )
 
 
 # ======================================================================
@@ -1202,90 +1417,154 @@ with tab_single:
                     """, unsafe_allow_html=True)
 
             with sub_ai_tab3:
-                st.markdown('<div style="font-size:13px;color:#8C958E;margin-bottom:10px;">Chat with your audio recording. Ask specific questions, investigate anomalous frames, or draft an official Cyber Crime FIR / Court Affidavit.</div>', unsafe_allow_html=True)
-                
-                # Pre-built quick action prompt buttons
-                q1, q2, q3 = st.columns(3)
-                quick_query = None
-                with q1:
-                    if st.button("🔍 Explain Suspect Glitches", use_container_width=True, key="quick_q1"):
-                        quick_query = "Please explain the highest-risk suspect window in this audio, what acoustic anomalies were triggered, and why."
-                with q2:
-                    if st.button("⚖️ Draft Police Cyber Complaint", use_container_width=True, key="quick_q2"):
-                        quick_query = "Draft a formal, court-ready Cyber Crime Investigation Affidavit and Police Complaint for this deepfake audio recording, citing the SHA-256 hash and timestamps."
-                with q3:
-                    if st.button("🛡️ Recommended Investigation Steps", use_container_width=True, key="quick_q3"):
-                        quick_query = "What forensic counter-verification steps and chain-of-custody protocols should be followed next for this audio?"
+                fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
+                curr_file_key = get_file_unique_key(data, fname)
+                curr_chat = get_file_chat_history(curr_file_key)
+                msg_count = len(curr_chat)
+                user_msg_count = len([m for m in curr_chat if m.get("role") == "user"])
 
-                if "copilot_chat_history" not in st.session_state:
-                    st.session_state["copilot_chat_history"] = []
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg, #131A16 0%, #0E1210 100%);border:1px solid #233027;border-radius:10px;padding:20px 22px;margin-bottom:16px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
+                    <div>
+                      <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:20px;">💬</span>
+                        <span style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:#ECEFEB;">Forensic AI Copilot — Dedicated Investigation Chatbox</span>
+                      </div>
+                      <div style="color:#8C958E;font-size:13px;margin-top:6px;max-width:680px;line-height:1.45;">
+                        Interact directly with your audio sample in an isolated, high-resolution modal chatbox. Ask deep technical questions, isolate frame glitches, cross-examine synthetic artifacts, or generate official court FIR affidavits with cryptographic chain of custody.
+                      </div>
+                    </div>
+                    <div style="text-align:right;">
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#3ECF8E;background:rgba(62,207,142,0.12);padding:4px 10px;border-radius:12px;border:1px solid rgba(62,207,142,0.25);">
+                        ● {user_msg_count} Questions Logged
+                      </span>
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8C958E;margin-top:4px;">
+                        File: <code style="color:#5EEAD4;">{fname}</code>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                # Render existing chat
-                for idx, msg in enumerate(st.session_state["copilot_chat_history"]):
-                    if msg["role"] == "user":
-                        st.markdown(f"""
-                        <div style="background:#1A231E;border-left:3px solid #5EEAD4;padding:10px 14px;border-radius:6px;margin:8px 0;">
-                          <b style="color:#5EEAD4;font-size:12px;font-family:'IBM Plex Mono',monospace;">INVESTIGATOR:</b>
-                          <div style="color:#ECEFEB;margin-top:4px;font-size:13.5px;">{msg['content']}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div style="background:#111513;border-left:3px solid #3ECF8E;padding:12px 16px;border-radius:6px;margin:8px 0;">
-                          <b style="color:#3ECF8E;font-size:12px;font-family:'IBM Plex Mono',monospace;">FORENSIC COPILOT:</b>
-                          <div style="color:#ECEFEB;margin-top:4px;font-size:13.5px;line-height:1.5;">{msg['content']}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                # Primary Action to open modal
+                col_main_btn, col_help = st.columns([2.8, 1.2])
+                with col_main_btn:
+                    if st.button(
+                        "💬 Open Dedicated AI Investigation Chatbox",
+                        key=f"btn_launch_dialog_{curr_file_key}",
+                        type="primary",
+                        use_container_width=True,
+                        help="Open high-resolution modal dialog for multi-turn forensic investigation."
+                    ):
+                        st.session_state["active_chat_modal"] = {
+                            "data": data,
+                            "audio_bytes": audio_bytes,
+                            "filename": fname,
+                            "gemini_key": gemini_key,
+                        }
+                        st.rerun()
 
-                        # Check if message is a Cyber Crime Complaint or Legal Affidavit
-                        is_complaint = any(term in msg['content'].lower() for term in ["complaint", "affidavit", "information technology act", "cyber crime police", "station house officer", "police complaint"])
-                        if is_complaint:
-                            try:
-                                import importlib
-                                import backend.forensic_utils as fu
-                                importlib.reload(fu)
-                                pdf_bytes = fu.build_police_complaint_pdf(
-                                    complaint_text=msg['content'],
-                                    filename=st.session_state.get("analyzed_file_name", data.get("filename", "audio.wav")),
-                                    hashes=data.get("file_hashes", {}),
-                                    verdict=data.get("verdict", "Unknown"),
-                                    fake_ratio=data.get("fake_ratio", 0.0),
-                                    user_tz_name=user_tz_name,
-                                )
-                                fname_base = os.path.splitext(st.session_state.get('analyzed_file_name', 'audio'))[0]
-                                st.download_button(
-                                    label="📄 Download Official Police Complaint & FIR Affidavit (PDF)",
-                                    data=pdf_bytes,
-                                    file_name=f"Cyber_Crime_Complaint_{fname_base}.pdf",
-                                    mime="application/pdf",
-                                    key=f"dl_pdf_complaint_{idx}",
-                                    type="primary",
-                                    use_container_width=True,
-                                    help="Download court-ready, printable PDF complaint with cryptographic SHA-256 chain of custody."
-                                )
-                            except Exception as e:
-                                st.error(f"Could not render PDF: {e}")
+                with col_help:
+                    if st.button("🗑️ Reset File Chat", key=f"btn_reset_chat_{curr_file_key}", use_container_width=True, disabled=(msg_count == 0)):
+                        st.session_state["file_chat_histories"][curr_file_key] = []
+                        st.session_state["copilot_chat_history"] = []
+                        st.rerun()
 
-                user_input = st.chat_input("Ask the Forensic AI Copilot about this audio recording...", key="chat_copilot_input")
-                active_query = quick_query or user_input
+                # 1-Click Quick Action shortcuts
+                st.markdown('<div style="font-size:12px;font-family:\'IBM Plex Mono\',monospace;color:#8C958E;margin:14px 0 6px 0;">1-CLICK DIRECT FORENSIC ACTIONS:</div>', unsafe_allow_html=True)
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    if st.button("🔍 Explain Suspect Glitches", use_container_width=True, key="quick_open_q1"):
+                        st.session_state["active_chat_modal"] = {
+                            "data": data,
+                            "audio_bytes": audio_bytes,
+                            "filename": fname,
+                            "gemini_key": gemini_key,
+                            "auto_query": "Please explain the highest-risk suspect window in this audio, what acoustic anomalies were triggered, and why."
+                        }
+                        st.rerun()
+                with c2:
+                    if st.button("⚖️ Draft Police Cyber Complaint", use_container_width=True, key="quick_open_q2"):
+                        st.session_state["active_chat_modal"] = {
+                            "data": data,
+                            "audio_bytes": audio_bytes,
+                            "filename": fname,
+                            "gemini_key": gemini_key,
+                            "auto_query": "Draft an official, court-ready Cyber Crime Police Complaint (FIR Petition) under Section 173 BNSS / 154 CrPC and Section 66D IT Act for this deepfake audio recording, citing the SHA-256 hash and timestamps."
+                        }
+                        st.rerun()
+                with c3:
+                    if st.button("🛡️ Investigation Protocol", use_container_width=True, key="quick_open_q3"):
+                        st.session_state["active_chat_modal"] = {
+                            "data": data,
+                            "audio_bytes": audio_bytes,
+                            "filename": fname,
+                            "gemini_key": gemini_key,
+                            "auto_query": "What forensic counter-verification steps and chain-of-custody protocols should be followed next for this audio?"
+                        }
+                        st.rerun()
 
-                if active_query:
-                    st.session_state["copilot_chat_history"].append({"role": "user", "content": active_query})
-                    with st.spinner("AI Copilot is analyzing query and audio context..."):
-                        fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
-                        chat_res = chat_with_audio_copilot(
-                            audio_bytes=audio_bytes,
-                            filename=fname,
-                            user_query=active_query,
-                            analysis=data,
-                            chat_history=st.session_state["copilot_chat_history"],
-                            api_key=gemini_key,
-                        )
-                        if chat_res.get("success"):
-                            st.session_state["copilot_chat_history"].append({"role": "assistant", "content": chat_res.get("response", "")})
-                            st.rerun()
-                        else:
-                            st.error(chat_res.get("error", "Copilot response failed."))
+                # Expandable preview of recent messages if any exist
+                if msg_count > 0:
+                    with st.expander(f"📜 View Conversation Preview ({user_msg_count} questions logged)", expanded=False):
+                        st.caption("Read-only snapshot of conversation history for this file. Open the dedicated chatbox above to continue conversation.")
+                        for idx, msg in enumerate(curr_chat):
+                            if msg["role"] == "user":
+                                with st.chat_message("user", avatar="🕵️"):
+                                    st.markdown('<b style="color:#5EEAD4;font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;">INVESTIGATOR:</b>', unsafe_allow_html=True)
+                                    st.markdown(msg['content'])
+                            else:
+                                with st.chat_message("assistant", avatar="🤖"):
+                                    st.markdown('<b style="color:#3ECF8E;font-size:11.5px;font-family:\'IBM Plex Mono\',monospace;">FORENSIC COPILOT:</b>', unsafe_allow_html=True)
+                                    st.markdown(msg['content'])
+
+                                is_complaint = any(term in msg['content'].lower() for term in ["complaint", "affidavit", "information technology act", "cyber crime police", "station house officer", "police complaint"])
+                                if is_complaint:
+                                    try:
+                                        # Optional Complainant Pre-fill Form (leave blank to sign by hand with pen)
+                                        with st.expander("📝 Fill Complainant & Incident Details for 1-Click Print (Optional)", expanded=False):
+                                            st.caption("ℹ️ Pre-fill your name, contact, and police station below to embed them directly into the PDF petition. You can also leave them blank and write them by hand after printing.")
+                                            col_c1, col_c2 = st.columns(2)
+                                            with col_c1:
+                                                c_name = st.text_input("Complainant Full Name", key=f"c_name_prev_{curr_file_key}_{idx}", placeholder="e.g. Ramesh Kumar")
+                                                c_phone = st.text_input("Complainant Mobile", key=f"c_phone_prev_{curr_file_key}_{idx}", placeholder="e.g. +91 98765 43210")
+                                                c_addr = st.text_input("Residential Address", key=f"c_addr_prev_{curr_file_key}_{idx}", placeholder="e.g. Sector 18, Noida, Uttar Pradesh")
+                                            with col_c2:
+                                                c_ps = st.text_input("Police Station / Cyber Cell Name", key=f"c_ps_prev_{curr_file_key}_{idx}", placeholder="e.g. Cyber Crime PS, Sector 108")
+                                                c_susp = st.text_input("Suspect Phone / WhatsApp / Handle", key=f"c_susp_prev_{curr_file_key}_{idx}", placeholder="e.g. +91 91234 56789 or @scammer_handle")
+                                                c_date = st.text_input("Incident Date", key=f"c_date_prev_{curr_file_key}_{idx}", placeholder="e.g. 20-Sep-2026")
+
+                                        import importlib
+                                        import backend.forensic_utils as fu
+                                        importlib.reload(fu)
+                                        pdf_bytes = fu.build_police_complaint_pdf(
+                                            complaint_text=msg['content'],
+                                            filename=fname,
+                                            hashes=data.get("file_hashes", {}),
+                                            verdict=data.get("verdict", "Unknown"),
+                                            fake_ratio=data.get("fake_ratio", 0.0),
+                                            user_tz_name=user_tz_name,
+                                            complainant_name=c_name,
+                                            complainant_phone=c_phone,
+                                            complainant_address=c_addr,
+                                            police_station=c_ps,
+                                            suspect_info=c_susp,
+                                            incident_date_str=c_date,
+                                        )
+                                        fname_base = os.path.splitext(fname)[0]
+                                        st.download_button(
+                                            label="📄 Download Official Court-Ready FIR Petition & Sec. 63 BSA Certificate (PDF)",
+                                            data=pdf_bytes,
+                                            file_name=f"Official_Cyber_Complaint_{fname_base}.pdf",
+                                            mime="application/pdf",
+                                            key=f"dl_pdf_preview_{curr_file_key}_{idx}",
+                                            type="primary",
+                                            use_container_width=True,
+                                            help="100% turnkey court-ready petition with Section 63 BSA / 65B Evidence Act certificate. Print directly and submit without needing a lawyer."
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Could not render PDF: {e}")
 
 
 # ======================================================================
@@ -1692,7 +1971,7 @@ with tab_history:
             col_v = "#3ECF8E" if "Authentic" in v or "Human" in v else "#FF5C5C" if "Synthetic" in v or "Fake" in v else "#FFB454"
             utc_iso = h.get("created_at_utc", "")
             disp_time = format_local_timestamp(utc_iso, user_tz_obj, user_tz_name) if utc_iso else h.get("created_at", "")
-            c_info, c_btn = st.columns([4, 1])
+            c_info, c_inspect, c_chat = st.columns([3.3, 0.9, 1.2])
             with c_info:
                 st.markdown(f"""
                 <div style="display:flex;justify-content:space-between;align-items:center;background:#131614;border:1px solid #262B27;border-radius:8px;padding:12px 16px;margin-bottom:6px;">
@@ -1713,7 +1992,7 @@ with tab_history:
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
-            with c_btn:
+            with c_inspect:
                 st.write("")
                 st.button(
                     "Inspect ◈",
@@ -1722,6 +2001,22 @@ with tab_history:
                     on_click=reinspect_scan_callback,
                     args=(h.get("result", {}), h.get("filename", ""), h.get("audio_bytes", None))
                 )
+            with c_chat:
+                st.write("")
+                h_data = h.get("result", {})
+                h_name = h.get("filename", "")
+                h_key = get_file_unique_key(h_data, h_name)
+                h_history = get_file_chat_history(h_key)
+                h_count = len([m for m in h_history if m.get("role") == "user"])
+                chat_label = f"💬 Chat ({h_count})" if h_count > 0 else "💬 Chat History"
+                if st.button(chat_label, key=f"open_chat_tab5_{idx}", use_container_width=True, help=f"Open dedicated AI Copilot chat history for {h_name}"):
+                    st.session_state["active_chat_modal"] = {
+                        "data": h_data,
+                        "audio_bytes": h.get("audio_bytes", None),
+                        "filename": h_name,
+                        "gemini_key": get_active_gemini_api_key(),
+                    }
+                    st.rerun()
 
         # CSV Export for Session History with Local and UTC timestamps
         hist_df = pd.DataFrame([
