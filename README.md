@@ -9,18 +9,25 @@ AudioArtifact is an advanced timeline-based forensic system for detecting and lo
 ### 🌟 Enterprise Forensic Capabilities (v2.0 Extended):
 1. **◈ Single Audio Localizer**:
    - **Segment-by-Segment Click-to-Play**: Instant audio player for each 2-second suspect window to hear synthetic glitches in isolation.
-   - **Cryptographic Chain-of-Custody**: SHA-256 and MD5 checksum verification.
+   - **Cryptographic Chain-of-Custody**: SHA-256 and MD5 bitstream checksum verification.
    - **Biological & Acoustic Artifacts**: High-frequency spectral rolloff (vocoder cutoff), zero-crossing rate, dynamic range, and vocal pitch inflection.
    - **1-Click Forensic Audit Certificate**: Printable ISO-style HTML/PDF forensic report download.
    - **Sensitivity Calibration**: Adjustable AI decision threshold (30%–75%).
 2. **🎙️ Live Mic Voice Test**: Real-time microphone audio recording and instant deepfake screening.
 3. **👥 Speaker Clone / Voiceprint Matcher**: WavLM 768-dim cosine similarity cross-matching between a Reference Voice and a Suspect Audio to detect impersonation and voice cloning attacks.
 4. **📁 Batch Forensic Scanner**: Multi-file bulk processing, progress tracking, and CSV audit export.
-5. **📜 Session History & Audit Log**: Searchable, filterable scan records with 1-click re-inspection and CSV logs.
-6. **🤖 Gemini AI Forensic Copilot & Threat Intelligence**:
-   - **Explainable AI (XAI) Briefings**: Plain-language acoustic & vocoder breakdown (English & Hindi/Hinglish).
-   - **Scam & Coercion Threat Intent**: Speech transcription and semantic screening for financial extortion, impersonation, and family emergency scams.
-   - **Interactive Audio Copilot**: Real-time Q&A with the recording and 1-click court-ready Cyber Crime Police Complaint / Legal Affidavit drafting.
+5. **📜 Session History & Audit Log**: Searchable, filterable scan records with side-by-side **Inspect ◈** and **💬 Chat** buttons to reinspect audio scans and resume full AI copilot chat histories anytime.
+6. **🤖 Dedicated Forensic AI Copilot & Modal Dialog**:
+   - **Isolated Modal Chatbox**: High-resolution dialog box for in-depth, multi-turn forensic dialogue per audio recording.
+   - **Multi-File Session Memory**: Each uploaded recording remembers its own complete conversation history during the browser session.
+   - **Sub-Second Low-Latency Model Chain**: High-speed neural inference pipeline (`gemini-3.5-flash-lite`, `gemini-flash-lite-latest`) with automatic zero-downtime failover.
+   - **Audio Waveform Grounding & Anti-Hallucination Guardrails**: Listens to actual waveforms; accurately distinguishes musical instruments (e.g., Veena, Sitar, piano) and ambient sounds from human voices to prevent speech/scam hallucinations.
+   - **Scam & Coercion Threat Intelligence**: Semantic screening for financial extortion, fake arrest/kidnap coercion, OTP phishing, and malicious impersonation.
+7. **⚖️ Court-Ready 2-Page Cyber Crime FIR Petition & Sec. 63 BSA Certificate (PDF)**:
+   - **Direct Print & Submit (Zero Lawyer Consultation Needed)**: Ready for immediate printing and submission to any Cyber Crime Police Station (SHO) or judicial magistrate.
+   - **New Criminal Laws Compliant**: Filed under **Section 173 BNSS, 2023** (formerly Sec. 154 CrPC) with dual penal provisions under **Bharatiya Nyaya Sanhita (BNS), 2023** (Sec. 318(4), 319(2), 336(3)) and **IT Act, 2000** (Sec. 66D, 66E).
+   - **Mandatory Electronic Evidence Certificate (Annexure - A)**: Executed under **Section 63 of Bharatiya Sakshya Adhiniyam (BSA), 2023** (formerly Sec. 65B(4) Indian Evidence Act) compliant with Supreme Court landmark precedent (*Arjun Panditrao Khotkar (2020) 7 SCC 1*).
+   - **Flawless 2-Page Turnkey Layout**: Exactly 2 pages without text truncation or cell overlapping; includes 1-click pre-fill forms and clean pen-fillable blanks.
 
 
 ---
@@ -233,10 +240,13 @@ If you want to train on your own audio recordings:
 AudioArtifact/
 ├── backend/
 │   ├── main.py                  <- FastAPI async API service (/analyze, /history)
+│   ├── ai_copilot.py            <- Gemini Forensic Copilot, XAI explanations, scam detection
+│   ├── forensic_utils.py        <- SHA-256 hashes, HTML audit report, 2-page FIR & Sec 63 BSA PDF
+│   ├── models.py                <- WavLM 768-dim embeddings & XGBoost inference pipeline
 │   ├── vad_utils.py             <- Silero VAD + energy-based silence filtering
 │   └── db.py                    <- SQLite persistence & scan history
 ├── frontend/
-│   └── app.py                   <- Streamlit dashboard with Plotly probability curve
+│   └── app.py                   <- Streamlit dashboard with Plotly probability curve & AI chat modal
 ├── data/
 │   ├── real/                    <- Human genuine audio dataset (.wav / .mp3)
 │   └── fake/                    <- Synthetic / cloned audio dataset (.wav / .mp3)
@@ -250,6 +260,29 @@ AudioArtifact/
 ├── history.db                   <- SQLite forensic scan history database
 └── README.md                    <- Engineering & setup documentation
 ```
+
+---
+
+## ⚖️ Legal Admissibility & Court Protocol (BNS, BNSS 2023 & Sec. 63 BSA)
+
+AudioArtifact generates **100% turnkey, court-ready legal documentation** that citizens, forensic examiners, and cybercrime investigators can directly print and submit to police stations or courts without requiring prior legal drafting.
+
+### Statutory Criminal Provisions Invoked:
+1. **Section 173 of Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023** *(formerly Section 154 CrPC)*:
+   - Mandatory registration of First Information Report (FIR) for cognizable cyber fraud.
+2. **Information Technology Act, 2000**:
+   - **Section 66D**: Cheating by personation using computer resources (imprisonment up to 3 years + fine).
+   - **Section 66E**: Privacy violations and non-consensual capture/transmission of synthetic likeness.
+3. **Bharatiya Nyaya Sanhita (BNS), 2023**:
+   - **Section 319(2)** *(formerly IPC 419)*: Punishment for cheating by personation.
+   - **Section 318(4)** *(formerly IPC 420)*: Cheating and dishonestly inducing delivery of property/funds.
+   - **Section 336(3) & 340(2)** *(formerly IPC 468/471)*: Forgery of electronic records for cheating.
+
+### Mandatory Electronic Evidence Certificate (Annexure - A):
+Under Indian evidence law, digital audio recordings are strictly inadmissible unless accompanied by a statutory certificate of authenticity:
+- Executed under **Section 63 of Bharatiya Sakshya Adhiniyam (BSA), 2023** *(formerly Section 65B(4) of the Indian Evidence Act, 1872)*.
+- Fully adheres to the mandatory legal safeguards laid down by the Hon'ble Supreme Court of India in ***Arjun Panditrao Khotkar v. Kailash Kushanrao Gorantyal (2020) 7 SCC 1***.
+- Certified SHA-256 bitstream checksum and MD5 signature permanently bind the physical paper complaint to the digital audio bitstream.
 
 ---
 
