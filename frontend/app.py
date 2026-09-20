@@ -779,7 +779,7 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
                 st.error(chat_res.get("error", "Copilot response failed."))
 
     # Modal Header Card
-    col_hdr_info, col_hdr_actions = st.columns([3.2, 1.2])
+    col_hdr_info, col_hdr_actions = st.columns([3.8, 0.9])
     with col_hdr_info:
         st.markdown(f"""
         <div style="background:#131614;border:1px solid #262B27;border-radius:8px;padding:10px 14px;margin-bottom:12px;">
@@ -803,16 +803,10 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
         """, unsafe_allow_html=True)
     with col_hdr_actions:
         st.write("")
-        c_act_clear, c_act_close = st.columns(2)
-        with c_act_clear:
-            if st.button("🗑️ Clear", key=f"dlg_clear_{file_key}", use_container_width=True, help="Clear chat history for this file"):
-                st.session_state["file_chat_histories"][file_key] = []
-                st.session_state["copilot_chat_history"] = []
-                st.rerun()
-        with c_act_close:
-            if st.button("✖ Close", key=f"dlg_close_{file_key}", use_container_width=True, help="Close investigation modal"):
-                st.session_state["active_chat_modal"] = None
-                st.rerun()
+        if st.button("🗑️ Clear", key=f"dlg_clear_{file_key}", use_container_width=True, help="Clear chat history for this file"):
+            st.session_state["file_chat_histories"][file_key] = []
+            st.session_state["copilot_chat_history"] = []
+            st.rerun()
 
     # Pre-built quick action prompt buttons
     st.markdown('<div style="font-size:12px;font-family:\'IBM Plex Mono\',monospace;color:#8C958E;margin-bottom:6px;">QUICK FORENSIC PROMPTS:</div>', unsafe_allow_html=True)
