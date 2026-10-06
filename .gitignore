@@ -59,3 +59,9 @@ logs/
 tmp/
 temp/
 scratch/
+
+# Large dataset features & personal mic recordings
+features_wavlm.csv
+features_wavlm.csv.gz
+data/real/user_mic_reference*.wav
+

@@ -38,7 +38,7 @@ if not exist "%~dp0model\deepfake_detector.pkl" (
 )
 
 echo Starting Backend (FastAPI on http://127.0.0.1:8000)...
-start "AudioArtifact - Backend" cmd /k "cd /d %~dp0 && call venv\Scripts\activate && uvicorn backend.main:app --port 8000"
+start "AudioArtifact - Backend" cmd /k "cd /d %~dp0 && call venv\Scripts\activate && uvicorn backend.main:app --port 8000 --reload"
 
 echo Waiting for backend service to initialize...
 timeout /t 2 /nobreak >nul

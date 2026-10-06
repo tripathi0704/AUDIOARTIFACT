@@ -402,14 +402,14 @@ def generate_forensic_html_report(result: dict, user_tz_name: str = None) -> str
     </div>
     <div style="text-align:right;">
       <div style="font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:800;color:{verdict_color};">{fake_ratio}%</div>
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;">Synthetic Ratio</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;">{"Zero AI (100% Organic)" if fake_ratio == 0 else "Overall AI Voice Content"}</div>
     </div>
   </div>
 
   <div class="grid-4">
     <div class="card">
-      <div class="label">Flagged Duration</div>
-      <div class="val" style="color:{verdict_color};">{fake_sec}s / {total_dur}s</div>
+      <div class="label">Overall AI Content</div>
+      <div class="val" style="color:{verdict_color};">{f"{fake_ratio}% AI" if fake_ratio > 0 else "0.0% AI"}</div>
     </div>
     <div class="card">
       <div class="label">Windows Analyzed</div>

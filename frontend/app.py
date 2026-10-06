@@ -1027,10 +1027,10 @@ with tab_single:
                     st.rerun()
 
         # Verdict Pill Style
-        if fake_ratio <= 15:
+        if "Authentic Human" in verdict or fake_ratio == 0:
             pill_class = "real"
             pill_text = f"✓ {verdict}"
-        elif fake_ratio >= 75:
+        elif "Fully Synthetic" in verdict or fake_ratio >= 75:
             pill_class = "fake"
             pill_text = f"⚠ {verdict}"
         else:
@@ -1040,6 +1040,9 @@ with tab_single:
         st.markdown('<div class="section-label">Forensic Summary & Cryptographic Proof</div>', unsafe_allow_html=True)
 
         # Top Status & Metrics Grid
+        ai_pct = round(fake_ratio, 1)
+        human_pct = round(100.0 - ai_pct, 1)
+
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.markdown(f"""
@@ -1052,9 +1055,9 @@ with tab_single:
         with c2:
             st.markdown(f"""
             <div class="vcard">
-              <div class="k">Synthetic Audio Ratio</div>
-              <div class="v" style="color:{'#FF5C5C' if fake_ratio > 40 else '#3ECF8E'}">{fake_ratio}%</div>
-              <div class="sub">{data.get("fake_seconds", 0)}s of {total_dur}s flagged</div>
+              <div class="k">Overall AI Voice Content</div>
+              <div class="v" style="color:{'#3ECF8E' if ai_pct == 0 else '#FF5C5C' if ai_pct > 30 else '#FFB454'}">{f'{ai_pct}% AI' if ai_pct > 0 else '0.0% AI'}</div>
+              <div class="sub">{'🛡️ 100.0% Genuine Human (0% AI)' if ai_pct == 0 else f'{ai_pct}% AI · {human_pct}% Human Voice'}</div>
             </div>
             """, unsafe_allow_html=True)
         with c3:
@@ -1072,6 +1075,36 @@ with tab_single:
               <div class="k">Model Confidence</div>
               <div class="v" style="color:var(--cyan);">{avg_conf}%</div>
               <div class="sub">{len(segments)} temporal speech frames</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Overall Voice Composition Bar (Visual Human vs AI Split)
+        st.markdown(f"""
+        <div style="background:#131614;border:1px solid #262B27;border-radius:10px;padding:12px 18px;margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+            <span><span style="color:#3ECF8E;font-weight:700;">● ORGANIC HUMAN VOICE:</span> <b>{human_pct}%</b></span>
+            <span><span style="color:{'#3ECF8E' if ai_pct == 0 else '#FF5C5C'};font-weight:700;">● SYNTHETIC AI VOICE:</span> <b>{ai_pct}%</b></span>
+          </div>
+          <div style="width:100%;height:8px;background:#262B27;border-radius:4px;overflow:hidden;display:flex;">
+            <div style="width:{human_pct}%;height:100%;background:#3ECF8E;transition:width 0.4s;"></div>
+            <div style="width:{ai_pct}%;height:100%;background:#FF5C5C;transition:width 0.4s;"></div>
+          </div>
+          <div style="margin-top:6px;font-size:11px;color:#8C958E;font-family:'IBM Plex Mono',monospace;display:flex;justify-content:space-between;flex-wrap:gap:6px;">
+            <span>{'✓ 100% Organic Human Voice — Zero AI synthetic artifacts detected (0.0% AI)' if ai_pct == 0 else f'⚠ {ai_pct}% of total speech matches synthetic voice patterns ({data.get("fake_seconds", 0)}s of {total_dur}s)'}</span>
+            <span>Analyzed Timeline: {total_dur}s</span>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        spliced_regions_list = data.get("spliced_regions", [])
+        if spliced_regions_list:
+            spliced_intervals_str = ", ".join([f"<b>{r.get('start', 0)}s – {r.get('end', 0)}s</b> ({r.get('duration', 0)}s, peak {r.get('max_prob', 0)*100:.1f}% AI)" for r in spliced_regions_list])
+            st.markdown(f"""
+            <div style="background:#1B1510;border:1px solid rgba(255,180,84,0.3);border-left:4px solid #FFB454;border-radius:8px;padding:10px 16px;margin-bottom:16px;">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#FFB454;font-weight:700;">🎯 SPLICED AI INSERTIONS LOCALIZED ({len(spliced_regions_list)} region{'s' if len(spliced_regions_list) > 1 else ''}):</div>
+              <div style="font-size:12.5px;color:#ECEFEB;margin-top:3px;line-height:1.5;">
+                {spliced_intervals_str}
+              </div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -1612,14 +1645,17 @@ with tab_mic:
             total_dur = data.get("total_duration", 0.0)
             fake_ratio = data.get("fake_ratio", 0.0)
             verdict = data.get("verdict", "")
-            col_v = "#3ECF8E" if fake_ratio <= 15 else "#FF5C5C" if fake_ratio >= 75 else "#FFB454"
+            col_v = "#3ECF8E" if ("Authentic Human" in verdict or fake_ratio == 0) else "#FF5C5C" if ("Fully Synthetic" in verdict or fake_ratio >= 75) else "#FFB454"
+
+            mic_ai_pct = round(fake_ratio, 1)
+            mic_human_pct = round(100.0 - mic_ai_pct, 1)
 
             st.markdown(f"""
             <div style="background:#131614;border:1px solid #262B27;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;margin-bottom:14px;">
               <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C958E;letter-spacing:0.04em;">LIVE MIC VERDICT · FULL TIMELINE AUDIT</div>
               <div style="font-size:22px;font-weight:700;color:{col_v};margin:4px 0;">{verdict}</div>
-              <div style="font-size:13px;color:#ECEFEB;">
-                Synthetic Ratio: <b>{fake_ratio}%</b> · Total Recorded Duration: <b>{total_dur}s</b> · Analyzed Frames: <b>{len(segments)} Temporal Windows</b>
+              <div style="font-size:13px;color:#ECEFEB;margin-top:6px;">
+                Overall AI Content: <b style="color:{'#3ECF8E' if mic_ai_pct == 0 else '#FF5C5C'};font-size:15px;">{mic_ai_pct}% AI</b> {f'🛡️ (100% Pure Organic Voice)' if mic_ai_pct == 0 else f'({mic_human_pct}% Human)'} · Total Recorded: <b>{total_dur}s</b> · Analyzed Frames: <b>{len(segments)} Temporal Windows</b>
               </div>
             </div>
             """, unsafe_allow_html=True)

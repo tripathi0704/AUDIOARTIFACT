@@ -87,6 +87,7 @@ def load_audio_16k(filepath: str) -> np.ndarray:
 def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPUT_CSV, batch_size: int = 32):
     """Extracts WavLM embeddings with safe sequential preprocessing and batched inference."""
     print(f"Initializing WavLM ({WAVLM_MODEL_ID})...")
+    torch.set_num_threads(14)
     extractor = AutoFeatureExtractor.from_pretrained(WAVLM_MODEL_ID)
     model = AutoModel.from_pretrained(WAVLM_MODEL_ID)
     model.eval()
@@ -94,14 +95,22 @@ def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPU
     tasks = []
     for folder_name, label in LABELS.items():
         folder_path = os.path.join(DATA_DIR, folder_name)
-        files = sorted(
+        all_found = sorted(
             glob.glob(os.path.join(folder_path, "*.wav")) +
             glob.glob(os.path.join(folder_path, "*.mp3"))
         )
+        # Always prioritize user-recorded mic audio and hard negatives
+        priority_files = [
+            f for f in all_found
+            if any(k in os.path.basename(f).lower() for k in ["user", "test", "mic", "original", "human"])
+        ]
+        other_files = [f for f in all_found if f not in priority_files]
+        files = priority_files + other_files
+
         if max_files_per_class and max_files_per_class > 0:
             files = files[:max_files_per_class]
 
-        print(f"Selected {len(files)} files from '{folder_name}' (label={label})")
+        print(f"Selected {len(files)} files from '{folder_name}' (label={label}, priority={len(priority_files)})")
         for f in files:
             tasks.append((f, label))
 
@@ -110,7 +119,7 @@ def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPU
         return
 
     total_files = len(tasks)
-    print(f"\nProcessing {total_files} total audio files...")
+    print(f"\nProcessing {total_files} total audio files with multi-core PyTorch (14 threads)...")
     start_time = time.time()
     all_segments_with_labels = []
 
@@ -118,24 +127,31 @@ def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPU
         try:
             y = load_audio_16k(filepath)
             sr_int = int(SAMPLE_RATE)
-            y_speech, _ = filter_speech_vad(y, sr_int)
-            if len(y_speech) < int(SAMPLE_RATE * 1.0):
-                y_speech = y
-
-            segments = slice_overlapping(y_speech, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
-            if len(segments) > 25:
-                segments = segments[:25]
-
+            
+            # Slice audio directly to capture authentic speech onsets, transitions, and pauses
+            segments = slice_overlapping(y, sr_int, window_sec=WINDOW_SEC, stride_sec=STRIDE_SEC)
+            
+            # Filter out dead digital silence (RMS < 0.006)
+            valid_segs = []
             for _, _, seg in segments:
+                rms = float(np.sqrt(np.mean(seg**2))) if len(seg) > 0 else 0.0
+                if rms >= 0.006:
+                    valid_segs.append(seg)
+            
+            # Cap segments per file to ensure maximum speaker diversity across files
+            if len(valid_segs) > 15:
+                valid_segs = valid_segs[:15]
+
+            for seg in valid_segs:
                 all_segments_with_labels.append((seg, label))
         except Exception as e:
             print(f"  [skip] {os.path.basename(filepath)}: {e}")
 
         if idx % 10 == 0 or idx == total_files:
             pct = (idx / total_files) * 100
-            print(f"  Audio VAD progress: [{idx}/{total_files}] ({pct:.1f}%) | Segments collected: {len(all_segments_with_labels)}", end="\r")
+            print(f"  Audio preprocessing: [{idx}/{total_files}] ({pct:.1f}%) | Segments collected: {len(all_segments_with_labels)}", end="\r")
 
-    print(f"\nVAD slicing complete in {time.time() - start_time:.1f}s. Total segments: {len(all_segments_with_labels)}")
+    print(f"\nPreprocessing complete in {time.time() - start_time:.1f}s. Total segments: {len(all_segments_with_labels)}")
 
     print(f"\nExtracting 768-dim WavLM embeddings in batches of {batch_size}...")
     t2_start = time.time()
@@ -175,7 +191,7 @@ def build_dataset(max_files_per_class: int = 50, output_csv: str = DEFAULT_OUTPU
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WavLM 768-dim Feature Extractor")
     parser.add_argument("--all", action="store_true", help="Process ALL files in data/")
-    parser.add_argument("--limit", type=int, default=50, help="Max files per class (default: 50)")
+    parser.add_argument("--limit", type=int, default=150, help="Max files per class (default: 150)")
     parser.add_argument("--output", type=str, default=DEFAULT_OUTPUT_CSV, help="Output CSV filename")
     parser.add_argument("--batch-size", type=int, default=32, help="Inference batch size")
     args = parser.parse_args()

@@ -80,16 +80,21 @@ _wavlm_extractor = None
 _wavlm_model = None
 
 
+_loaded_model_mtime = 0
+
+
 def get_model():
     """Lazily load detection model and initialize database if needed."""
-    global model
+    global model, _loaded_model_mtime
     init_db()
-    if model is not None:
-        return model
     if os.path.exists(MODEL_PATH):
         try:
+            current_mtime = os.path.getmtime(MODEL_PATH)
+            if model is not None and _loaded_model_mtime == current_mtime:
+                return model
             model = joblib.load(MODEL_PATH)
-            print(f"[Backend] Deepfake detector model loaded from {MODEL_PATH}")
+            _loaded_model_mtime = current_mtime
+            print(f"[Backend] Deepfake detector model loaded from {MODEL_PATH} (mtime: {_loaded_model_mtime})")
         except Exception as e:
             print(f"[Backend] Error loading model: {e}")
     else:
@@ -214,7 +219,10 @@ def decode_audio_bytes(content: bytes, original_filename: str = "upload.wav"):
                 os.remove(tmp_path)
 
     if y is None or len(y) == 0:
-        return None, SAMPLE_RATE, "Failed to decode audio file. Please ensure it is a valid .wav or .mp3 file."
+        return None, SAMPLE_RATE, "Failed to decode audio file. Please ensure it is a valid audio file (.wav, .mp3, .m4a, .ogg, .flac)."
+
+    if len(y) < int(0.5 * SAMPLE_RATE):
+        return None, SAMPLE_RATE, f"Audio file is too short ({len(y)/SAMPLE_RATE:.2f}s). Minimum recommended length is 1 second."
 
     return y, SAMPLE_RATE, None
 
@@ -280,27 +288,38 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
             feats = np.vstack(feat_chunks)
 
     probas = clf.predict_proba(feats)  # shape: (N, 2)
-    fake_probs = probas[:, 1]
-    human_probs = probas[:, 0]
-    preds = (fake_probs >= 0.50).astype(int)
+    raw_fake_probs = probas[:, 1].tolist()
+    raw_human_probs = probas[:, 0].tolist()
+    num_segs = len(segments)
+
+    # --- FORENSIC ENHANCEMENT 1: VAD Silence & Low-Energy Gating ---
+    # Windows with minimal active speech (e.g. breaths, mic clicks, dead silence)
+    # must not be falsely flagged as AI vocoders.
+    # --- FORENSIC CLASSIFICATION & VAD SILENCE GATING ---
+    final_fake_probs = []
+    for i, (start_t, end_t, seg_wave) in enumerate(segments):
+        p_f = raw_fake_probs[i]
+        seg_speech_dur = 0.0
+        for iv in speech_intervals:
+            s_iv = max(start_t, iv.get("start", 0.0))
+            e_iv = min(end_t, iv.get("end", 0.0))
+            if e_iv > s_iv:
+                seg_speech_dur += (e_iv - s_iv)
+
+        seg_rms = float(np.sqrt(np.mean(seg_wave**2))) if len(seg_wave) > 0 else 0.0
+
+        # Silence gating: Windows with < 0.20s speech or RMS energy < 0.008 are background silence
+        if seg_speech_dur < 0.20 or seg_rms < 0.008:
+            p_f = min(p_f, 0.05)
+        final_fake_probs.append(round(p_f, 4))
+
+    final_fake_probs_np = np.array(final_fake_probs)
+    preds = (final_fake_probs_np >= 0.50).astype(int)
 
     results = []
-    fake_count = int(np.sum(preds))
-    highest_idx = int(np.argmax(fake_probs))
-    highest_fake_prob = float(fake_probs[highest_idx])
-    highest_conf = round(float((highest_fake_prob if preds[highest_idx] == 1 else human_probs[highest_idx]) * 100), 2)
-
-    highest_risk = {
-        "segment": highest_idx,
-        "start": segments[highest_idx][0],
-        "end": segments[highest_idx][1],
-        "fake_probability": round(highest_fake_prob, 4),
-        "confidence": highest_conf,
-    }
-
     for i, (start_t, end_t, _) in enumerate(segments):
-        p_fake = float(fake_probs[i])
-        p_human = float(human_probs[i])
+        p_fake = float(final_fake_probs[i])
+        p_human = round(1.0 - p_fake, 4)
         pr = int(preds[i])
         conf = round((p_fake if pr == 1 else p_human) * 100, 2)
 
@@ -314,14 +333,53 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
             "confidence": conf,
         })
 
+    # --- FORENSIC ENHANCEMENT: Spliced Region Localization ---
+    spliced_regions = []
+    curr_region = None
+    for seg_info in results:
+        if seg_info["label_code"] == 1:
+            if curr_region is None:
+                curr_region = {
+                    "start": seg_info["start"],
+                    "end": seg_info["end"],
+                    "max_prob": seg_info["fake_probability"],
+                    "segments": [seg_info["segment"]],
+                }
+            else:
+                curr_region["end"] = seg_info["end"]
+                curr_region["max_prob"] = max(curr_region["max_prob"], seg_info["fake_probability"])
+                curr_region["segments"].append(seg_info["segment"])
+        else:
+            if curr_region is not None:
+                curr_region["duration"] = round(curr_region["end"] - curr_region["start"], 2)
+                spliced_regions.append(curr_region)
+                curr_region = None
+    if curr_region is not None:
+        curr_region["duration"] = round(curr_region["end"] - curr_region["start"], 2)
+        spliced_regions.append(curr_region)
+
+    fake_count = int(np.sum(preds))
+    highest_idx = int(np.argmax(final_fake_probs_np))
+    highest_fake_prob = float(final_fake_probs_np[highest_idx])
+    highest_conf = round(float((highest_fake_prob if preds[highest_idx] == 1 else (1.0 - highest_fake_prob)) * 100), 2)
+
+    highest_risk = {
+        "segment": highest_idx,
+        "start": segments[highest_idx][0],
+        "end": segments[highest_idx][1],
+        "fake_probability": round(highest_fake_prob, 4),
+        "confidence": highest_conf,
+    }
+
     # Summary forensic calculations
     total_analyzed_duration = round(segments[-1][1], 2)
     fake_ratio = round((fake_count / len(segments)) * 100, 1)
     fake_seconds = round(fake_count * STRIDE_SEC, 2)
 
-    if fake_ratio <= 15.0:
+    # Clean, accurate, unbiased verdict calculation:
+    if fake_count == 0:
         verdict = "Authentic Human Voice"
-    elif fake_ratio >= 75.0:
+    elif fake_ratio >= 75.0 or (len(segments) <= 4 and fake_ratio >= 50.0):
         verdict = "Fully Synthetic Voice Detected"
     else:
         verdict = "Spliced Audio Detected"
@@ -354,6 +412,7 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         "fake_ratio": fake_ratio,
         "verdict": verdict,
         "highest_risk_segment": highest_risk,
+        "spliced_regions": spliced_regions,
         "segments": results,
         "spectrogram": spec_dict,
         "file_hashes": file_hashes,
