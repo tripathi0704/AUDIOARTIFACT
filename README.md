@@ -1,4 +1,4 @@
-# ◈ AudioArtifact v2.0 — Timeline-Based Deepfake Audio Localizer
+# ◈ AudioArtifact  — Timeline-Based Deepfake Audio Localizer
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://audioartifact.streamlit.app)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
