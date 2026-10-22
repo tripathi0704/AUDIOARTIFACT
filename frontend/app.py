@@ -1,5 +1,5 @@
 """
-app.py — AudioArtifact v2.0 Enterprise Forensic Dashboard
+app.py — AudioArtifact Enterprise Forensic Dashboard
 ---------------------------------------------------------
 Comprehensive Timeline-Based Deepfake Audio Localizer & Forensic Suite.
 
@@ -40,6 +40,14 @@ except Exception:
     sys.modules["numba"] = _m
     sys.modules["numba.core"] = types.ModuleType("numba.core")
     sys.modules["numba.core.decorators"] = _m
+
+# Prevent torchaudio DLL loading failures on Windows (Smart App Control / C++ extension issues)
+# torchaudio is not used by AudioArtifact (we use soundfile & librosa)
+if "torchaudio" not in sys.modules:
+    try:
+        import torchaudio  # noqa: F401
+    except Exception:
+        sys.modules["torchaudio"] = None
 
 import numpy as np
 import plotly.graph_objects as go
@@ -143,7 +151,7 @@ if not is_local_backend_active(8000):
     preload_cloud_models()
 
 st.set_page_config(
-    page_title="AudioArtifact v2.0 — Forensic Audio Suite",
+    page_title="AudioArtifact — Forensic Audio Suite",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -604,7 +612,7 @@ initial_clock_str = now_local.strftime("%I:%M:%S %p")
 
 st.markdown(f"""
 <div class="brand-nav">
-  <div class="brand"><span class="px"></span>AudioArtifact <span style="font-size:12px;color:#8C958E;font-weight:400;">v2.0 Forensic Suite</span></div>
+  <div class="brand"><span class="px"></span>AudioArtifact</div>
   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <div class="status-badge" style="color:var(--cyan);border-color:rgba(94,234,212,0.3);">
       <i></i>SESSION #{st.session_state['session_token']}

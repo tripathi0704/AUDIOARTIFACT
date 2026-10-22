@@ -109,7 +109,7 @@ What `setup.bat` does automatically:
 2. Checks if an old/broken `venv` was copied from another computer and cleans it.
 3. Creates a fresh virtual environment in `.\venv`.
 4. Upgrades `pip`.
-5. Installs the lightweight CPU PyTorch & torchaudio package.
+5. Installs the lightweight CPU PyTorch package.
 6. Installs all required packages from `requirements.txt`.
 7. Validates all core imports (`FastAPI`, `Streamlit`, `Librosa`, `XGBoost`, `Torch`, `Silero VAD`).
 
@@ -163,7 +163,7 @@ python -m pip install --upgrade pip
 ### 5. Install PyTorch (CPU-Optimized)
 Installing PyTorch CPU directly first saves 2+ GB of unnecessary GPU CUDA downloads and avoids download timeouts:
 ```bash
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### 6. Install Project Dependencies

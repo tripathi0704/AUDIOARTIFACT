@@ -71,7 +71,7 @@ echo.
 REM 5. Install PyTorch CPU first (faster and lighter for Windows)
 echo [3/4] Installing PyTorch (CPU build) and dependencies...
 echo       (This may take 1-3 minutes depending on your internet connection)
-venv\Scripts\pip.exe install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cpu --quiet
 if !errorlevel! neq 0 (
     echo [NOTICE] PyTorch direct wheel install failed, will fallback to standard pip install...
 )

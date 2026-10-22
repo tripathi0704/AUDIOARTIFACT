@@ -31,6 +31,14 @@ except Exception:
     sys.modules["numba.core"] = types.ModuleType("numba.core")
     sys.modules["numba.core.decorators"] = _m
 
+# Prevent torchaudio DLL loading failures on Windows (Smart App Control / C++ extension issues)
+# torchaudio is not used by AudioArtifact (we use soundfile & librosa)
+if "torchaudio" not in sys.modules:
+    try:
+        import torchaudio  # noqa: F401
+    except Exception:
+        sys.modules["torchaudio"] = None
+
 import librosa
 import soundfile as sf
 from transformers import AutoFeatureExtractor, AutoModel
