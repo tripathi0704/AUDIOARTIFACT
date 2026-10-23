@@ -113,10 +113,19 @@ def get_model():
 _wavlm_error = None
 
 
+def set_wavlm(extractor, model):
+    """Explicitly register already-cached WavLM models from Streamlit cache."""
+    global _wavlm_extractor, _wavlm_model, _wavlm_error
+    if extractor is not None and model is not None:
+        _wavlm_extractor = extractor
+        _wavlm_model = model
+        _wavlm_error = None
+
+
 def get_wavlm():
     """Lazily load and cache WavLM feature extractor and model on CPU."""
     global _wavlm_extractor, _wavlm_model, _wavlm_error
-    if _wavlm_model is None:
+    if _wavlm_model is None or _wavlm_extractor is None:
         try:
             print(f"[Backend] Loading WavLM model ({WAVLM_MODEL_ID})...")
             try:
@@ -235,12 +244,18 @@ def decode_audio_bytes(content: bytes, original_filename: str = "upload.wav"):
     return y, SAMPLE_RATE, None
 
 
-def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") -> dict:
+def analyze_audio_data(
+    content: bytes,
+    original_filename: str = "upload.wav",
+    custom_model=None,
+    custom_extractor=None,
+    custom_wavlm=None,
+) -> dict:
     """
     High-performance forensic analysis engine with in-memory audio decoding
     and vectorized batch inference across the entire continuous audio timeline.
     """
-    clf = get_model()
+    clf = custom_model if custom_model is not None else get_model()
     if clf is None:
         return {"error": "Detection model not loaded. Please train the model using train_model.py first."}
 
@@ -275,7 +290,11 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
         }
 
     # 4. High-speed vectorized batch WavLM prediction (768-dim embeddings)
-    extractor, wavlm_model = get_wavlm()
+    if custom_extractor is not None and custom_wavlm is not None:
+        extractor, wavlm_model = custom_extractor, custom_wavlm
+    else:
+        extractor, wavlm_model = get_wavlm()
+
     if extractor is None or wavlm_model is None:
         err_detail = _wavlm_error if _wavlm_error else "Model weights could not be loaded."
         return {"error": f"WavLM model failed to initialize: {err_detail}"}
@@ -436,7 +455,12 @@ def analyze_audio_data(content: bytes, original_filename: str = "upload.wav") ->
     return response
 
 
-def extract_speaker_embedding_vector(content: bytes, original_filename: str = "upload.wav"):
+def extract_speaker_embedding_vector(
+    content: bytes,
+    original_filename: str = "upload.wav",
+    custom_extractor=None,
+    custom_wavlm=None,
+):
     """
     Extracts mean-pooled 768-dimensional WavLM speaker representation from speech segments.
     Used for cross-audio voiceprint matching and deepfake clone verification.
@@ -459,9 +483,14 @@ def extract_speaker_embedding_vector(content: bytes, original_filename: str = "u
     if not segments:
         return None, "Audio is too short for speaker voiceprint extraction (minimum 2 seconds required)."
 
-    extractor, wavlm_model = get_wavlm()
+    if custom_extractor is not None and custom_wavlm is not None:
+        extractor, wavlm_model = custom_extractor, custom_wavlm
+    else:
+        extractor, wavlm_model = get_wavlm()
+
     if extractor is None or wavlm_model is None:
-        return None, "WavLM model not loaded."
+        err_detail = _wavlm_error if _wavlm_error else "Model weights not loaded."
+        return None, f"WavLM model not loaded: {err_detail}"
 
     seg_waves = [seg for _, _, seg in segments]
     with torch.inference_mode():

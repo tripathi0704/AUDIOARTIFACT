@@ -62,19 +62,13 @@ if project_root not in sys.path:
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-# Hot-reload backend modules so running Streamlit servers immediately pick up edits without restart
-import importlib
-for _mod_name in ["backend.forensic_utils", "backend.ai_copilot", "backend.main"]:
-    if _mod_name in sys.modules:
-        try:
-            importlib.reload(sys.modules[_mod_name])
-        except Exception:
-            pass
-
 from backend.main import (
     analyze_audio_data,
     extract_speaker_embedding_vector,
     decode_audio_bytes,
+    get_model,
+    get_wavlm,
+    set_wavlm,
 )
 from backend.forensic_utils import (
     compute_speaker_similarity,
@@ -138,17 +132,21 @@ def is_local_backend_active(port: int = 8000) -> bool:
         return False
 
 
-@st.cache_resource(show_spinner="Initializing forensic foundation models...")
+@st.cache_resource(show_spinner="Initializing forensic foundation models (WavLM & Detector)...")
 def preload_cloud_models():
     """Cache foundation models in memory on startup."""
-    from backend.main import get_model, get_wavlm
-    get_model()
-    return get_wavlm()
+    from backend.main import get_model, get_wavlm, set_wavlm
+    m = get_model()
+    ext, wavlm = get_wavlm()
+    set_wavlm(ext, wavlm)
+    return m, ext, wavlm
 
 
 # If local backend on port 8000 is not active, preload models once in Streamlit process
 if not is_local_backend_active(8000):
-    preload_cloud_models()
+    _cached_clf, _cached_ext, _cached_wavlm = preload_cloud_models()
+    from backend.main import set_wavlm
+    set_wavlm(_cached_ext, _cached_wavlm)
 
 st.set_page_config(
     page_title="AudioArtifact — Forensic Audio Suite",
@@ -719,7 +717,19 @@ def execute_forensic_scan(file_bytes: bytes, filename: str) -> dict:
             data = None
 
     if not data or "error" in data:
-        data = analyze_audio_data(file_bytes, filename)
+        cached_clf, cached_ext, cached_wavlm = (None, None, None)
+        if not is_local_backend_active(8000):
+            try:
+                cached_clf, cached_ext, cached_wavlm = preload_cloud_models()
+            except Exception:
+                pass
+        data = analyze_audio_data(
+            file_bytes,
+            filename,
+            custom_model=cached_clf,
+            custom_extractor=cached_ext,
+            custom_wavlm=cached_wavlm
+        )
 
     return data
 
@@ -1729,8 +1739,19 @@ with tab_speaker:
                 ref_bytes = ref_file.getvalue()
                 sus_bytes = sus_file.getvalue()
 
-                emb_ref, err_ref = extract_speaker_embedding_vector(ref_bytes, ref_file.name)
-                emb_sus, err_sus = extract_speaker_embedding_vector(sus_bytes, sus_file.name)
+                cached_clf, cached_ext, cached_wavlm = (None, None, None)
+                if not is_local_backend_active(8000):
+                    try:
+                        cached_clf, cached_ext, cached_wavlm = preload_cloud_models()
+                    except Exception:
+                        pass
+
+                emb_ref, err_ref = extract_speaker_embedding_vector(
+                    ref_bytes, ref_file.name, custom_extractor=cached_ext, custom_wavlm=cached_wavlm
+                )
+                emb_sus, err_sus = extract_speaker_embedding_vector(
+                    sus_bytes, sus_file.name, custom_extractor=cached_ext, custom_wavlm=cached_wavlm
+                )
 
                 if err_ref:
                     st.error(f"Reference Audio Error: {err_ref}")
