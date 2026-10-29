@@ -122,12 +122,6 @@ def get_active_gemini_api_key() -> str:
                         return line.split("=", 1)[1].strip().strip('"').strip("'")
         except Exception:
             pass
-    # Built-in cloud default fallback so public visitors never have to enter an API key
-    try:
-        import base64
-        return base64.b64decode("QVEuQWI4Uk42TDNVVVVwRDVMNm01eGZTalp6bUhuZHhGOHpubGdrYTJDLWNpSkcwenFGWWc=").decode("utf-8")
-    except Exception:
-        pass
     return ""
 
 
