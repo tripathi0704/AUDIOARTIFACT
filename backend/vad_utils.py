@@ -14,7 +14,9 @@ import types
 try:
     from numba import _dispatcher
 except Exception:
+    import importlib.machinery
     _m = types.ModuleType("numba")
+    _m.__spec__ = importlib.machinery.ModuleSpec("numba", None)
     _m.jit = lambda *a, **kw: (lambda f: f) if a and callable(a[0]) else (lambda f: f)
     _m.njit = _m.jit
     _m.vectorize = _m.jit
@@ -22,8 +24,25 @@ except Exception:
     _m.stencil = _m.jit
     _m.prange = range
     sys.modules["numba"] = _m
-    sys.modules["numba.core"] = types.ModuleType("numba.core")
+    _m_core = types.ModuleType("numba.core")
+    _m_core.__spec__ = importlib.machinery.ModuleSpec("numba.core", None)
+    sys.modules["numba.core"] = _m_core
     sys.modules["numba.core.decorators"] = _m
+
+# Prevent torchaudio DLL loading failures on Windows (Smart App Control / C++ extension issues)
+# torchaudio is not used by AudioArtifact (we use soundfile & librosa)
+if "torchaudio" not in sys.modules:
+    import importlib.machinery
+    _m_ta = types.ModuleType("torchaudio")
+    _m_ta.__version__ = "2.14.0"
+    _m_ta.__spec__ = importlib.machinery.ModuleSpec("torchaudio", None)
+    sys.modules["torchaudio"] = _m_ta
+    _m_ta_lib = types.ModuleType("torchaudio.lib")
+    _m_ta_lib.__spec__ = importlib.machinery.ModuleSpec("torchaudio.lib", None)
+    sys.modules["torchaudio.lib"] = _m_ta_lib
+    _m_ta_c = types.ModuleType("torchaudio.lib._torchaudio")
+    _m_ta_c.__spec__ = importlib.machinery.ModuleSpec("torchaudio.lib._torchaudio", None)
+    sys.modules["torchaudio.lib._torchaudio"] = _m_ta_c
 
 import numpy as np
 import librosa
