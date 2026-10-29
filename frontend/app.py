@@ -110,12 +110,6 @@ def get_active_gemini_api_key() -> str:
                         return line.split("=", 1)[1].strip().strip('"').strip("'")
         except Exception:
             pass
-    # Built-in cloud default fallback so public visitors never have to enter an API key
-    try:
-        import base64
-        return base64.b64decode("QVEuQWI4Uk42TDNVVVVwRDVMNm01eGZTalp6bUhuZHhGOHpubGdrYTJDLWNpSkcwenFGWWc=").decode("utf-8")
-    except Exception:
-        pass
     return ""
 
 
@@ -149,7 +143,7 @@ if not is_local_backend_active(8000):
     set_wavlm(_cached_ext, _cached_wavlm)
 
 st.set_page_config(
-    page_title="AudioArtifact — Audio forensics console",
+    page_title="AudioArtifact — Deepfake audio detector",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -315,24 +309,23 @@ def format_local_timestamp(dt_or_str=None, tz_obj=None, tz_name="") -> str:
 # ----------------------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root{
-  --bg: #0E1218;
-  --panel: #151B24;
-  --panel-2: #1B2330;
-  --line: #2A3442;
-  --text: #D8E0EA;
-  --muted: #8795A8;
-  --muted-dim: #66758A;
-  --real: #3DB88A;
-  --real-dim: rgba(61,184,138,0.13);
-  --fake: #EE5A52;
-  --fake-dim: rgba(238,90,82,0.14);
-  --amber: #E3A03A;
-  --amber-dim: rgba(227,160,58,0.14);
-  --cyan: #5AA9E6;
-  --accent: #3F82CC;
+  --bg: #F3F5F8;
+  --panel: #FFFFFF;
+  --panel-2: #F6F8FB;
+  --line: #DDE2EA;
+  --text: #172033;
+  --muted: #5B6577;
+  --muted-dim: #8590A3;
+  --real: #0E8F7E;
+  --real-dim: rgba(14,143,126,0.10);
+  --fake: #D93654;
+  --fake-dim: rgba(217,54,84,0.10);
+  --amber: #B86E00;
+  --amber-dim: rgba(184,110,0,0.12);
+  --cyan: #2F3FBF;
 }
 
 #MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {
@@ -343,195 +336,232 @@ st.markdown("""
 .stApp { background: var(--bg); }
 
 .block-container {
-  padding-top: 1.4rem;
+  padding-top: 1.6rem;
   padding-bottom: 3rem;
-  max-width: 1180px;
+  max-width: 1120px;
 }
 
 html, body, [class*="css"], .stApp {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Figtree', sans-serif;
   color: var(--text);
 }
 
-h1, h2, h3, .section-label, .vcard .v, .tb-name {
-  font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
+h1, h2, h3, .hero-title, .section-label, .vcard .v {
+  font-family: 'Bricolage Grotesque', 'Figtree', sans-serif;
 }
 
-code, .mono { font-family: 'IBM Plex Mono', monospace; }
+code, .mono { font-family: 'JetBrains Mono', monospace; }
+
 a { color: var(--cyan); }
+
 :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
-/* Console bar */
-.topbar {
+/* Top bar */
+.brand-nav {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  margin-bottom: 18px;
+  margin-bottom: 28px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
 }
-.tb-left { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
-.tb-name { font-size: 20px; font-weight: 700; letter-spacing: 0.01em; }
-.tb-sep { width: 1px; height: 18px; background: var(--line); }
-.tb-sub { font-size: 14px; color: var(--muted); }
-.tb-right { display: flex; align-items: stretch; }
-.tb-item {
+.brand {
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: -0.01em;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 18px;
-  border-left: 1px solid var(--line);
+  align-items: center;
+  gap: 10px;
 }
-.tb-item .k { font-size: 11.5px; color: var(--muted-dim); }
-.tb-item .v { font-size: 13px; color: var(--text); font-family: 'IBM Plex Mono', monospace; }
-
-/* Spec strip */
-.specs {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.status-badge {
+  font-size: 12.5px;
+  color: var(--muted);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  margin-bottom: 22px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.spec { padding: 12px 16px; border-left: 1px solid var(--line); }
-.spec:first-child { border-left: none; }
-.spec .k { font-size: 12px; color: var(--muted-dim); margin-bottom: 3px; }
-.spec .v { font-size: 13.5px; font-family: 'IBM Plex Mono', monospace; color: var(--text); }
+.status-badge b { color: var(--text); font-weight: 600; }
+.status-badge .sep { width: 1px; height: 14px; background: var(--line); }
 
-.empty-panel {
-  background: var(--panel);
-  border: 1px dashed #34414F;
-  border-radius: 4px;
-  padding: 26px 24px;
-  margin-top: 16px;
+/* Hero */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 36px;
+  align-items: center;
+  margin-bottom: 30px;
 }
-.empty-panel .t { font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 17px; margin-bottom: 6px; }
-.empty-panel .d { color: var(--muted); font-size: 14.5px; line-height: 1.55; max-width: 640px; }
+.hero-title {
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  font-size: clamp(30px, 4vw, 46px);
+  line-height: 1.08;
+  margin: 0 0 14px;
+  color: var(--text);
+}
+.hero-sub {
+  color: var(--muted);
+  font-size: 16.5px;
+  line-height: 1.6;
+  max-width: 520px;
+  margin: 0;
+}
+.hero-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px 12px;
+}
+.hero-card .cap {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.hero-card .cap b { color: var(--fake); font-weight: 600; }
+
+/* How it works */
+.how {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 22px 0 6px;
+}
+.how-step {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.how-step .n {
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-weight: 800;
+  font-size: 22px;
+  color: var(--fake);
+  line-height: 1;
+}
+.how-step .t { font-weight: 700; font-size: 15.5px; margin: 8px 0 4px; }
+.how-step .d { color: var(--muted); font-size: 14px; line-height: 1.5; }
 
 /* Tabs */
 .stTabs [data-baseweb="tab-list"] {
-  gap: 2px;
+  gap: 4px;
   background: transparent;
   padding: 0;
   border-radius: 0;
   border: none;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 .stTabs [data-baseweb="tab"] {
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-weight: 500;
-  font-size: 15.5px;
+  font-family: 'Figtree', sans-serif;
+  font-weight: 600;
+  font-size: 15px;
   color: var(--muted);
-  padding: 10px 18px;
+  padding: 10px 16px;
   border: none !important;
   background-color: transparent !important;
 }
 .stTabs [aria-selected="true"] { color: var(--text) !important; }
-.stTabs [data-baseweb="tab-highlight"] { background-color: var(--cyan) !important; height: 2px; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: var(--text) !important; height: 2px; }
 .stTabs [data-baseweb="tab-border"] { background-color: transparent !important; }
 
 /* Uploader */
 [data-testid="stFileUploader"] {
   background: var(--panel);
-  border: 1px dashed #34414F;
-  border-radius: 4px;
+  border: 1.5px dashed #C3CBD9;
+  border-radius: 12px;
   padding: 10px 14px;
   transition: border-color 0.2s ease;
 }
-[data-testid="stFileUploader"]:hover { border-color: var(--cyan); }
+[data-testid="stFileUploader"]:hover { border-color: var(--text); }
 [data-testid="stFileUploader"] section { background: transparent; border: none; }
 
 /* Buttons */
 div.stButton > button, div.stDownloadButton > button {
-  background: var(--accent);
+  background: var(--text);
   color: #FFFFFF;
-  border: 1px solid #5B9BD9;
-  font-weight: 500;
-  font-family: 'IBM Plex Sans', sans-serif;
+  border: 1px solid var(--text);
+  font-weight: 600;
+  font-family: 'Figtree', sans-serif;
   font-size: 14.5px;
-  padding: 8px 20px;
-  border-radius: 3px;
+  padding: 9px 20px;
+  border-radius: 8px;
   transition: background 0.15s ease;
 }
 div.stButton > button:hover, div.stDownloadButton > button:hover {
-  background: #5B9BD9;
-  border-color: #7DB3E8;
+  background: #2B3752;
+  border-color: #2B3752;
   color: #FFFFFF;
 }
 div.stButton > button p, div.stDownloadButton > button p { color: inherit; }
 
-/* Panel headings */
+/* Section headings */
 .section-label {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--text);
-  margin: 32px 0 12px;
-  padding: 0 0 8px 12px;
-  border-bottom: 1px solid var(--line);
-  border-left: 3px solid var(--cyan);
-  line-height: 1.2;
+  margin: 34px 0 12px;
 }
 
-/* Result panels */
+/* Result cards */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 14px;
+  margin-bottom: 20px;
 }
 .vcard {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 16px 18px;
-  min-height: 128px;
+  border-radius: 10px;
+  padding: 18px 20px;
+  min-height: 132px;
 }
-.vcard .k { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.vcard .v { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vcard .k { font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
+.vcard .v { font-size: 26px; font-weight: 700; }
 .vcard .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
 .pill-status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
-  border-radius: 3px;
-  font-size: 12.5px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
-.pill-status.real { background: var(--real-dim); border: 1px solid rgba(61,184,138,0.45); color: var(--real); }
-.pill-status.fake { background: var(--fake-dim); border: 1px solid rgba(238,90,82,0.5); color: var(--fake); }
-.pill-status.mixed { background: var(--amber-dim); border: 1px solid rgba(227,160,58,0.5); color: var(--amber); }
+.pill-status.real { background: var(--real-dim); border: 1px solid rgba(14,143,126,0.35); color: var(--real); }
+.pill-status.fake { background: var(--fake-dim); border: 1px solid rgba(217,54,84,0.35); color: var(--fake); }
+.pill-status.mixed { background: var(--amber-dim); border: 1px solid rgba(184,110,0,0.35); color: var(--amber); }
 
+/* File fingerprint strip */
 .crypto-strip {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 10px;
   padding: 12px 16px;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 18px;
-  font-family: 'IBM Plex Mono', monospace;
+  margin-bottom: 20px;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
 }
 
-@media (max-width: 860px) {
-  .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .spec { border-top: 1px solid var(--line); }
-  .spec:nth-child(-n+2) { border-top: none; }
-  .spec:nth-child(odd) { border-left: none; }
-  .tb-right { width: 100%; border-top: 1px solid var(--line); }
-  .tb-item:first-child { border-left: none; }
+@media (max-width: 800px) {
+  .hero { grid-template-columns: 1fr; gap: 20px; }
+  .how { grid-template-columns: 1fr; }
+  .status-badge { font-size: 12px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -544,12 +574,9 @@ now_local = datetime.now(timezone.utc).astimezone(user_tz_obj)
 initial_clock_str = now_local.strftime("%I:%M:%S %p")
 
 st.markdown(f"""
-<div class="topbar">
-<div class="tb-left"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="7" width="3" height="6" fill="#D8E0EA"/><rect x="6" y="3" width="3" height="14" fill="#D8E0EA"/><rect x="11" y="8" width="3" height="4" fill="#EE5A52"/><rect x="16" y="1" width="3" height="18" fill="#D8E0EA"/></svg><span class="tb-name">AudioArtifact</span><span class="tb-sep"></span><span class="tb-sub">Audio forensics console</span></div>
-<div class="tb-right">
-<div class="tb-item"><span class="k">Session</span><span class="v">{st.session_state['session_token']}</span></div>
-<div class="tb-item"><span class="k">Local time</span><span class="v">{initial_clock_str} {user_tz_label}</span></div>
-</div>
+<div class="brand-nav">
+<div class="brand"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect x="1" y="8" width="3" height="6" rx="1.5" fill="#172033"/><rect x="6" y="4" width="3" height="14" rx="1.5" fill="#172033"/><rect x="11" y="9" width="3" height="4" rx="1.5" fill="#D93654"/><rect x="16" y="2" width="3" height="18" rx="1.5" fill="#172033"/></svg>AudioArtifact</div>
+<div class="status-badge"><span>Session <b>{st.session_state['session_token']}</b></span><span class="sep"></span><span><b>{initial_clock_str}</b> {user_tz_label}</span></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -558,14 +585,14 @@ st.markdown(f"""
 # SIDEBAR CONFIGURATION (AI COPILOT & CLIENT PREFERENCES)
 # ----------------------------------------------------------------------
 with st.sidebar:
-    st.markdown('<div style="font-family:\'IBM Plex Sans\',sans-serif;font-weight:700;font-size:14px;color:#D8E0EA;margin-bottom:12px;">Settings</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'Figtree\',sans-serif;font-weight:700;font-size:14px;color:#172033;margin-bottom:12px;">Settings</div>', unsafe_allow_html=True)
     
     with st.expander("Gemini AI copilot", expanded=True):
         active_gemini_key = get_active_gemini_api_key()
         if active_gemini_key:
-            st.markdown('<div style="font-family:\'IBM Plex Sans\',sans-serif;font-size:11.5px;color:#3DB88A;background:rgba(61,184,138,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(61,184,138,0.25);margin-bottom:10px;">Gemini connected</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-family:\'Figtree\',sans-serif;font-size:11.5px;color:#0E8F7E;background:rgba(14,143,126,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(14,143,126,0.25);margin-bottom:10px;">Gemini connected</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="font-family:\'IBM Plex Sans\',sans-serif;font-size:11.5px;color:#E3A03A;background:rgba(227,160,58,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(227,160,58,0.25);margin-bottom:10px;">No API key set (optional)</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-family:\'Figtree\',sans-serif;font-size:11.5px;color:#B86E00;background:rgba(184,110,0,0.1);padding:5px 10px;border-radius:6px;border:1px solid rgba(184,110,0,0.25);margin-bottom:10px;">No API key set (optional)</div>', unsafe_allow_html=True)
 
         user_input_key = st.text_input(
             "Gemini API Key",
@@ -580,8 +607,8 @@ with st.sidebar:
             st.rerun()
 
         st.markdown(
-            """<div style="font-size:11px;color:#8795A8;margin-top:8px;line-height:1.4;">
-            Get a free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#3DB88A;text-decoration:none;">Google AI Studio</a>.<br/>
+            """<div style="font-size:11px;color:#5B6577;margin-top:8px;line-height:1.4;">
+            Get a free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#0E8F7E;text-decoration:none;">Google AI Studio</a>.<br/>
             On Streamlit Cloud, you can also add <code>GEMINI_API_KEY</code> in Secrets.
             </div>""",
             unsafe_allow_html=True
@@ -591,16 +618,16 @@ with st.sidebar:
 # TOP NAVIGATION TABS & REDIRECTION CONTROLLER
 # ----------------------------------------------------------------------
 TAB_TITLES = [
-    "Analyze",
-    "Live mic",
-    "Voice match",
+    "Analyze a file",
+    "Live mic test",
+    "Compare voices",
     "Batch scan",
     "History",
 ]
 
 
 def reinspect_scan_callback(record_result: dict, record_filename: str, record_audio_bytes: bytes = None):
-    """Updates session state and redirects active tab to Analyze."""
+    """Updates session state and redirects active tab to Analyze a file."""
     st.session_state["last_result"] = record_result
     st.session_state["analyzed_file_name"] = record_filename
     st.session_state["analyzed_audio_bytes"] = record_audio_bytes
@@ -695,7 +722,7 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
     hashes = (analysis_data or {}).get("file_hashes", {})
     sha = hashes.get("sha256", "")
     sha_short = (sha[:14] + "..." + sha[-6:]) if len(sha) > 20 else (sha or "N/A")
-    col_v = "#3DB88A" if "Authentic" in v or "Human" in v else "#EE5A52" if "Synthetic" in v or "Fake" in v else "#E3A03A"
+    col_v = "#0E8F7E" if "Authentic" in v or "Human" in v else "#D93654" if "Synthetic" in v or "Fake" in v else "#B86E00"
 
     # Process auto_query if invoked via 1-click shortcut
     modal_info = st.session_state.get("active_chat_modal")
@@ -722,20 +749,20 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
     col_hdr_info, col_hdr_actions = st.columns([3.8, 0.9])
     with col_hdr_info:
         st.markdown(f"""
-        <div style="background:#151B24;border:1px solid #2A3442;border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+        <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-radius:8px;padding:10px 14px;margin-bottom:12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
             <div>
-              <div style="font-weight:700;font-size:14px;color:#D8E0EA;">📁 {filename}</div>
-              <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#8795A8;margin-top:2px;">
-                SHA-256: <code style="color:#5AA9E6;background:#1B2330;padding:2px 6px;border-radius:4px;">{sha_short}</code>
+              <div style="font-weight:700;font-size:14px;color:#172033;">📁 {filename}</div>
+              <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#5B6577;margin-top:2px;">
+                SHA-256: <code style="color:#2F3FBF;background:#EEF1F7;padding:2px 6px;border-radius:4px;">{sha_short}</code>
               </div>
             </div>
             <div style="text-align:right;">
-              <span style="font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;font-weight:700;color:{col_v};background:#1B2330;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);">
+              <span style="font-family:'Figtree',sans-serif;font-size:11.5px;font-weight:700;color:{col_v};background:#F6F8FB;padding:4px 10px;border-radius:12px;border:1px solid rgba(23,32,51,0.10);">
                 {v}
               </span>
-              <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#8795A8;margin-top:3px;">
-                Synthetic: <b style="color:#D8E0EA;">{fake_ratio:.1f}%</b>
+              <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#5B6577;margin-top:3px;">
+                Synthetic: <b style="color:#172033;">{fake_ratio:.1f}%</b>
               </div>
             </div>
           </div>
@@ -749,7 +776,7 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
             st.rerun()
 
     # Pre-built quick action prompt buttons
-    st.markdown('<div style="font-size:12px;font-family:\'IBM Plex Sans\',sans-serif;color:#8795A8;margin-bottom:6px;">Quick prompts</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:12px;font-family:\'Figtree\',sans-serif;color:#5B6577;margin-bottom:6px;">Quick prompts</div>', unsafe_allow_html=True)
     q1, q2, q3 = st.columns(3)
     quick_query = None
     with q1:
@@ -765,9 +792,9 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
     # Message feed
     if not chat_history:
         st.markdown("""
-        <div style="background:#151B24;border:1px dashed #34414F;border-radius:8px;padding:22px;text-align:center;color:#8795A8;margin:12px 0;">
+        <div style="background:#F6F8FB;border:1px dashed #C3CBD9;border-radius:8px;padding:22px;text-align:center;color:#5B6577;margin:12px 0;">
           <div style="font-size:24px;margin-bottom:4px;">🤖</div>
-          <div style="font-size:13.5px;font-weight:600;color:#D8E0EA;">Forensic AI Copilot Ready</div>
+          <div style="font-size:13.5px;font-weight:600;color:#172033;">Forensic AI Copilot Ready</div>
           <div style="font-size:12px;margin-top:4px;">Ask specific questions, examine anomalous frames, or click one of the quick prompts above.</div>
         </div>
         """, unsafe_allow_html=True)
@@ -775,11 +802,11 @@ def open_forensic_chat_dialog(analysis_data: dict, audio_bytes: bytes, filename:
         for idx, msg in enumerate(chat_history):
             if msg["role"] == "user":
                 with st.chat_message("user", avatar="🕵️"):
-                    st.markdown('<b style="color:#5AA9E6;font-size:12px;font-family:\'IBM Plex Sans\',sans-serif;">Investigator</b>', unsafe_allow_html=True)
+                    st.markdown('<b style="color:#2F3FBF;font-size:12px;font-family:\'Figtree\',sans-serif;">Investigator</b>', unsafe_allow_html=True)
                     st.markdown(msg['content'])
             else:
                 with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown('<b style="color:#3DB88A;font-size:12px;font-family:\'IBM Plex Sans\',sans-serif;">Copilot</b>', unsafe_allow_html=True)
+                    st.markdown('<b style="color:#0E8F7E;font-size:12px;font-family:\'Figtree\',sans-serif;">Copilot</b>', unsafe_allow_html=True)
                     st.markdown(msg['content'])
 
                 # Check if message is a Cyber Crime Complaint or Legal Affidavit
@@ -871,12 +898,14 @@ if st.session_state.get("active_chat_modal"):
 with tab_single:
     if st.session_state.get("single_file_uploader") is None and "last_result" not in st.session_state:
         st.markdown("""
-<div class="specs">
-<div class="spec"><div class="k">Detector</div><div class="v">WavLM + XGBoost</div></div>
-<div class="spec"><div class="k">Window</div><div class="v">2 s</div></div>
-<div class="spec"><div class="k">Step</div><div class="v">1 s</div></div>
-<div class="spec"><div class="k">Default threshold</div><div class="v">50% AI</div></div>
-<div class="spec"><div class="k">Input</div><div class="v">WAV, MP3 · 200 MB</div></div>
+<div class="hero">
+<div>
+<h1 class="hero-title">Find where a voice recording turns synthetic</h1>
+<p class="hero-sub">Upload a recording and AudioArtifact scores every two seconds of speech, then marks the stretches that look AI-generated. Use it to check suspicious calls and voice notes.</p>
+</div>
+<div class="hero-card"><svg viewBox="0 0 360 120" width="100%" role="img" aria-label="Example timeline: one flagged stretch inside a 24 second recording"><rect x="218" y="6" width="63" height="88" rx="6" fill="rgba(217,54,84,0.10)"/><rect x="0" y="42.7" width="3" height="26.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="5" y="38.4" width="3" height="35.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="10" y="31.1" width="3" height="49.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="15" y="32.6" width="3" height="46.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="20" y="26.7" width="3" height="58.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="25" y="29.0" width="3" height="54.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="30" y="33.9" width="3" height="44.2" rx="1.5" fill="#172033" opacity="0.82"/><rect x="35" y="34.4" width="3" height="43.1" rx="1.5" fill="#172033" opacity="0.82"/><rect x="40" y="40.8" width="3" height="30.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="45" y="39.9" width="3" height="32.2" rx="1.5" fill="#172033" opacity="0.82"/><rect x="50" y="36.8" width="3" height="38.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="55" y="33.6" width="3" height="44.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="60" y="28.4" width="3" height="55.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="65" y="23.7" width="3" height="64.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="70" y="32.2" width="3" height="47.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="75" y="34.1" width="3" height="43.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="80" y="36.6" width="3" height="38.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="85" y="42.5" width="3" height="26.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="90" y="36.6" width="3" height="38.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="95" y="32.8" width="3" height="46.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="100" y="24.1" width="3" height="63.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="105" y="31.8" width="3" height="48.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="110" y="24.1" width="3" height="63.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="115" y="32.0" width="3" height="48.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="120" y="36.5" width="3" height="39.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="125" y="40.6" width="3" height="30.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="130" y="40.0" width="3" height="31.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="135" y="32.6" width="3" height="46.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="140" y="32.8" width="3" height="46.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="145" y="26.8" width="3" height="58.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="150" y="25.6" width="3" height="60.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="155" y="29.9" width="3" height="52.1" rx="1.5" fill="#172033" opacity="0.82"/><rect x="160" y="31.9" width="3" height="48.1" rx="1.5" fill="#172033" opacity="0.82"/><rect x="165" y="38.9" width="3" height="34.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="170" y="42.5" width="3" height="26.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="175" y="38.0" width="3" height="36.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="180" y="30.7" width="3" height="50.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="185" y="29.2" width="3" height="53.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="190" y="29.0" width="3" height="54.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="195" y="26.9" width="3" height="58.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="200" y="30.8" width="3" height="50.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="205" y="35.8" width="3" height="40.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="210" y="39.5" width="3" height="32.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="215" y="39.1" width="3" height="33.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="220" y="35.6" width="3" height="40.7" rx="1.5" fill="#D93654" opacity="1"/><rect x="225" y="29.4" width="3" height="53.2" rx="1.5" fill="#D93654" opacity="1"/><rect x="230" y="27.3" width="3" height="57.4" rx="1.5" fill="#D93654" opacity="1"/><rect x="235" y="23.2" width="3" height="65.5" rx="1.5" fill="#D93654" opacity="1"/><rect x="240" y="26.7" width="3" height="58.6" rx="1.5" fill="#D93654" opacity="1"/><rect x="245" y="33.9" width="3" height="44.3" rx="1.5" fill="#D93654" opacity="1"/><rect x="250" y="35.6" width="3" height="40.8" rx="1.5" fill="#D93654" opacity="1"/><rect x="255" y="42.5" width="3" height="27.1" rx="1.5" fill="#D93654" opacity="1"/><rect x="260" y="37.1" width="3" height="37.9" rx="1.5" fill="#D93654" opacity="1"/><rect x="265" y="30.1" width="3" height="51.9" rx="1.5" fill="#D93654" opacity="1"/><rect x="270" y="31.8" width="3" height="48.4" rx="1.5" fill="#D93654" opacity="1"/><rect x="275" y="27.2" width="3" height="57.6" rx="1.5" fill="#D93654" opacity="1"/><rect x="280" y="32.3" width="3" height="47.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="285" y="29.1" width="3" height="53.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="290" y="33.4" width="3" height="45.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="295" y="40.0" width="3" height="31.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="300" y="38.6" width="3" height="34.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="305" y="35.2" width="3" height="41.6" rx="1.5" fill="#172033" opacity="0.82"/><rect x="310" y="28.3" width="3" height="55.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="315" y="26.6" width="3" height="58.9" rx="1.5" fill="#172033" opacity="0.82"/><rect x="320" y="26.3" width="3" height="59.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="325" y="29.2" width="3" height="53.5" rx="1.5" fill="#172033" opacity="0.82"/><rect x="330" y="30.1" width="3" height="51.7" rx="1.5" fill="#172033" opacity="0.82"/><rect x="335" y="35.9" width="3" height="40.3" rx="1.5" fill="#172033" opacity="0.82"/><rect x="340" y="42.3" width="3" height="27.4" rx="1.5" fill="#172033" opacity="0.82"/><rect x="345" y="35.9" width="3" height="40.1" rx="1.5" fill="#172033" opacity="0.82"/><rect x="350" y="35.0" width="3" height="42.0" rx="1.5" fill="#172033" opacity="0.82"/><rect x="355" y="26.6" width="3" height="58.9" rx="1.5" fill="#172033" opacity="0.82"/><line x1="0" y1="104" x2="360" y2="104" stroke="#DDE2EA"/><text x="1" y="117" font-size="9" fill="#5B6577" text-anchor="start">0s</text><text x="91" y="117" font-size="9" fill="#5B6577" text-anchor="middle">6s</text><text x="181" y="117" font-size="9" fill="#5B6577" text-anchor="middle">12s</text><text x="271" y="117" font-size="9" fill="#5B6577" text-anchor="middle">18s</text><text x="349" y="117" font-size="9" fill="#5B6577" text-anchor="end">24s</text></svg>
+<div class="cap"><b>Example result:</b> one flagged stretch inside a 24-second clip</div>
+</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -911,9 +940,10 @@ with tab_single:
 
     if uploaded_file is None and "last_result" not in st.session_state:
         st.markdown("""
-<div class="empty-panel">
-<div class="t">No recording loaded</div>
-<div class="d">Upload a WAV or MP3 recording above. The console scores every two-second window, flags the stretches that match synthetic speech, and builds a timeline you can play back and export.</div>
+<div class="how">
+<div class="how-step"><div class="n">1</div><div class="t">Upload</div><div class="d">Add a WAV or MP3 recording, up to 200 MB.</div></div>
+<div class="how-step"><div class="n">2</div><div class="t">Analyze</div><div class="d">Every two-second window is scored for signs of synthetic speech.</div></div>
+<div class="how-step"><div class="n">3</div><div class="t">Read the timeline</div><div class="d">See which seconds are flagged, play them back, and export a report.</div></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -966,8 +996,8 @@ with tab_single:
             with c_inf1:
                 disp_fname = st.session_state.get("analyzed_file_name", data.get("filename", "Audio File"))
                 st.markdown(f"""
-                <div style="background:#151B24;border:1px solid #2A3442;border-left:4px solid var(--cyan);padding:10px 16px;border-radius:8px;margin-bottom:12px;">
-                  <div style="font-family:'IBM Plex Sans',sans-serif;font-size:10.5px;color:#8795A8;letter-spacing:0.04em;">Viewing a record from this session</div>
+                <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-left:4px solid var(--cyan);padding:10px 16px;border-radius:8px;margin-bottom:12px;">
+                  <div style="font-family:'Figtree',sans-serif;font-size:10.5px;color:#5B6577;letter-spacing:0.04em;">Viewing a record from this session</div>
                   <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px;">📁 {disp_fname}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1015,7 +1045,7 @@ with tab_single:
             st.markdown(f"""
             <div class="vcard">
               <div class="k">Overall AI Voice Content</div>
-              <div class="v" style="color:{'#3DB88A' if ai_pct == 0 else '#EE5A52' if ai_pct > 30 else '#E3A03A'}">{f'{ai_pct}% AI' if ai_pct > 0 else '0.0% AI'}</div>
+              <div class="v" style="color:{'#0E8F7E' if ai_pct == 0 else '#D93654' if ai_pct > 30 else '#B86E00'}">{f'{ai_pct}% AI' if ai_pct > 0 else '0.0% AI'}</div>
               <div class="sub">{'🛡️ 100.0% Genuine Human (0% AI)' if ai_pct == 0 else f'{ai_pct}% AI · {human_pct}% Human Voice'}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -1024,7 +1054,7 @@ with tab_single:
             st.markdown(f"""
             <div class="vcard">
               <div class="k">Peak Risk Segment</div>
-              <div class="v" style="color:{'#EE5A52' if peak_prob >= 50 else '#3DB88A'}">{peak_prob}% AI</div>
+              <div class="v" style="color:{'#D93654' if peak_prob >= 50 else '#0E8F7E'}">{peak_prob}% AI</div>
               <div class="sub">Interval: {highest.get('start', 0)}s – {highest.get('end', 0)}s</div>
             </div>
             """, unsafe_allow_html=True)
@@ -1039,16 +1069,16 @@ with tab_single:
 
         # Overall Voice Composition Bar (Visual Human vs AI Split)
         st.markdown(f"""
-        <div style="background:#151B24;border:1px solid #2A3442;border-radius:10px;padding:12px 18px;margin-bottom:18px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;">
-            <span><span style="color:#3DB88A;font-weight:700;">● Human voice:</span> <b>{human_pct}%</b></span>
-            <span><span style="color:{'#3DB88A' if ai_pct == 0 else '#EE5A52'};font-weight:700;">● Synthetic AI voice:</span> <b>{ai_pct}%</b></span>
+        <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-radius:10px;padding:12px 18px;margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-family:'Figtree',sans-serif;font-size:11.5px;">
+            <span><span style="color:#0E8F7E;font-weight:700;">● Human voice:</span> <b>{human_pct}%</b></span>
+            <span><span style="color:{'#0E8F7E' if ai_pct == 0 else '#D93654'};font-weight:700;">● Synthetic AI voice:</span> <b>{ai_pct}%</b></span>
           </div>
-          <div style="width:100%;height:8px;background:#2A3442;border-radius:4px;overflow:hidden;display:flex;">
-            <div style="width:{human_pct}%;height:100%;background:#3DB88A;transition:width 0.4s;"></div>
-            <div style="width:{ai_pct}%;height:100%;background:#EE5A52;transition:width 0.4s;"></div>
+          <div style="width:100%;height:8px;background:#DDE2EA;border-radius:4px;overflow:hidden;display:flex;">
+            <div style="width:{human_pct}%;height:100%;background:#0E8F7E;transition:width 0.4s;"></div>
+            <div style="width:{ai_pct}%;height:100%;background:#D93654;transition:width 0.4s;"></div>
           </div>
-          <div style="margin-top:6px;font-size:11px;color:#8795A8;font-family:'IBM Plex Sans',sans-serif;display:flex;justify-content:space-between;flex-wrap:gap:6px;">
+          <div style="margin-top:6px;font-size:11px;color:#5B6577;font-family:'Figtree',sans-serif;display:flex;justify-content:space-between;flex-wrap:gap:6px;">
             <span>{'✓ 100% Organic Human Voice — Zero AI synthetic artifacts detected (0.0% AI)' if ai_pct == 0 else f'⚠ {ai_pct}% of total speech matches synthetic voice patterns ({data.get("fake_seconds", 0)}s of {total_dur}s)'}</span>
             <span>Analyzed Timeline: {total_dur}s</span>
           </div>
@@ -1059,9 +1089,9 @@ with tab_single:
         if spliced_regions_list:
             spliced_intervals_str = ", ".join([f"<b>{r.get('start', 0)}s – {r.get('end', 0)}s</b> ({r.get('duration', 0)}s, peak {r.get('max_prob', 0)*100:.1f}% AI)" for r in spliced_regions_list])
             st.markdown(f"""
-            <div style="background:#231C10;border:1px solid rgba(227,160,58,0.3);border-left:4px solid #E3A03A;border-radius:8px;padding:10px 16px;margin-bottom:16px;">
-              <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#E3A03A;font-weight:700;">Spliced AI sections found ({len(spliced_regions_list)} region{'s' if len(spliced_regions_list) > 1 else ''}):</div>
-              <div style="font-size:12.5px;color:#D8E0EA;margin-top:3px;line-height:1.5;">
+            <div style="background:#FFF4DE;border:1px solid rgba(184,110,0,0.3);border-left:4px solid #B86E00;border-radius:8px;padding:10px 16px;margin-bottom:16px;">
+              <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#B86E00;font-weight:700;">Spliced AI sections found ({len(spliced_regions_list)} region{'s' if len(spliced_regions_list) > 1 else ''}):</div>
+              <div style="font-size:12.5px;color:#172033;margin-top:3px;line-height:1.5;">
                 {spliced_intervals_str}
               </div>
             </div>
@@ -1167,11 +1197,11 @@ with tab_single:
             y=fake_probs,
             mode="lines+markers",
             name="Deepfake Probability",
-            line=dict(color="#5AA9E6", width=3, shape="spline"),
+            line=dict(color="#172033", width=3, shape="spline"),
             marker=dict(
                 size=7,
-                color=["#EE5A52" if p >= threshold_pct else "#3DB88A" for p in fake_probs],
-                line=dict(color="#0E1218", width=1.5)
+                color=["#D93654" if p >= threshold_pct else "#0E8F7E" for p in fake_probs],
+                line=dict(color="#FFFFFF", width=1.5)
             ),
             hovertext=hover_texts,
             hoverinfo="text"
@@ -1179,20 +1209,20 @@ with tab_single:
 
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#151B24",
+            plot_bgcolor="#FFFFFF",
             height=320,
             margin=dict(l=40, r=20, t=20, b=40),
             xaxis=dict(
-                title=dict(text="Timeline (Seconds)", font=dict(family="IBM Plex Mono", size=11, color="#8795A8")),
-                tickfont=dict(family="IBM Plex Mono", size=10, color="#66758A"),
-                gridcolor="#2A3442",
+                title=dict(text="Timeline (Seconds)", font=dict(family="Figtree", size=11, color="#5B6577")),
+                tickfont=dict(family="Figtree", size=10, color="#8590A3"),
+                gridcolor="#DDE2EA",
                 zeroline=False,
                 range=[0, total_dur]
             ),
             yaxis=dict(
-                title=dict(text="AI Voice Probability (%)", font=dict(family="IBM Plex Mono", size=11, color="#8795A8")),
-                tickfont=dict(family="IBM Plex Mono", size=10, color="#66758A"),
-                gridcolor="#2A3442",
+                title=dict(text="AI Voice Probability (%)", font=dict(family="Figtree", size=11, color="#5B6577")),
+                tickfont=dict(family="Figtree", size=10, color="#8590A3"),
+                gridcolor="#DDE2EA",
                 range=[-2, 105],
                 zeroline=False
             ),
@@ -1202,7 +1232,7 @@ with tab_single:
                 y=1.02,
                 xanchor="right",
                 x=1,
-                font=dict(family="IBM Plex Mono", size=11, color="#8795A8")
+                font=dict(family="Figtree", size=11, color="#5B6577")
             ),
             hovermode="closest"
         )
@@ -1225,17 +1255,17 @@ with tab_single:
             for idx, s in enumerate(segments):
                 with seg_cols[idx % 3]:
                     is_fake = s["fake_probability"] * 100 >= threshold_pct
-                    color = "#EE5A52" if is_fake else "#3DB88A"
+                    color = "#D93654" if is_fake else "#0E8F7E"
                     st.markdown(f"""
-                    <div style="background:#1B2330;border:1px solid #2A3442;border-left:3px solid {color};padding:10px 12px;border-radius:8px;margin-bottom:8px;">
-                      <div style="font-family:'IBM Plex Sans',sans-serif;font-size:10px;color:#8795A8;">
+                    <div style="background:#F6F8FB;border:1px solid #DDE2EA;border-left:3px solid {color};padding:10px 12px;border-radius:8px;margin-bottom:8px;">
+                      <div style="font-family:'Figtree',sans-serif;font-size:10px;color:#5B6577;">
                         Window {s.get('segment', idx) + 1} · {s.get('start', 0)}s–{s.get('end', 0)}s
                       </div>
 
                       <div style="font-weight:700;font-size:14px;color:{color};margin-top:2px;">
                         {'AI Fake' if is_fake else 'Human'} ({s['fake_probability']*100:.1f}%)
                       </div>
-                      <div style="font-size:11px;color:#66758A;">Confidence: {s['confidence']}%</div>
+                      <div style="font-size:11px;color:#8590A3;">Confidence: {s['confidence']}%</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -1257,14 +1287,14 @@ with tab_single:
 
             fig3d = go.Figure(data=[go.Surface(
                 z=z, x=x, y=y_axis,
-                colorscale=[[0, "#0E1218"], [0.35, "#16324A"], [0.7, "#2B6CA3"], [1.0, "#8CC6F2"]],
+                colorscale=[[0, "#EEF3F8"], [0.35, "#BFE3DC"], [0.7, "#4DB6A5"], [1.0, "#0B5F53"]],
                 showscale=False
             )])
             fig3d.update_layout(
                 scene=dict(
-                    xaxis=dict(title="", showbackground=False, color="#66758A"),
-                    yaxis=dict(title="", showbackground=False, color="#66758A"),
-                    zaxis=dict(title="", showbackground=False, color="#66758A"),
+                    xaxis=dict(title="", showbackground=False, color="#8590A3"),
+                    yaxis=dict(title="", showbackground=False, color="#8590A3"),
+                    zaxis=dict(title="", showbackground=False, color="#8590A3"),
                     bgcolor="rgba(0,0,0,0)",
                 ),
                 paper_bgcolor="rgba(0,0,0,0)",
@@ -1282,19 +1312,19 @@ with tab_single:
         has_key = bool(gemini_key)
 
         status_tag = (
-            '<span style="font-family:\'IBM Plex Sans\',sans-serif;font-size:11px;color:#3DB88A;background:rgba(61,184,138,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(61,184,138,0.3);">● AI engine ready</span>'
+            '<span style="font-family:\'Figtree\',sans-serif;font-size:11px;color:#0E8F7E;background:rgba(14,143,126,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(14,143,126,0.3);">● AI engine ready</span>'
             if has_key
-            else '<span style="font-family:\'IBM Plex Sans\',sans-serif;font-size:11px;color:#E3A03A;background:rgba(227,160,58,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(227,160,58,0.3);">○ API key required</span>'
+            else '<span style="font-family:\'Figtree\',sans-serif;font-size:11px;color:#B86E00;background:rgba(184,110,0,0.1);padding:4px 10px;border-radius:16px;border:1px solid rgba(184,110,0,0.3);">○ API key required</span>'
         )
 
         st.markdown(f"""
-        <div style="background:#121821;border:1px solid #2A3442;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
+        <div style="background:#F6F8FB;border:1px solid #DDE2EA;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
             <div>
-              <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:15px;color:#D8E0EA;display:flex;align-items:center;gap:8px;">
-                <span style="color:#5AA9E6;">🤖</span> Multimodal Forensic Reasoning & Threat Intel
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:#172033;display:flex;align-items:center;gap:8px;">
+                <span style="color:#2F3FBF;">🤖</span> Multimodal Forensic Reasoning & Threat Intel
               </div>
-              <div style="font-size:12px;color:#8795A8;margin-top:3px;">
+              <div style="font-size:12px;color:#5B6577;margin-top:3px;">
                 Correlates WavLM deep acoustic anomalies with speech semantics using Google Gemini 3.6 Flash.
               </div>
             </div>
@@ -1324,8 +1354,8 @@ with tab_single:
                     else:
                         st.warning("Please enter an API key.")
             st.markdown(
-                """<div style="font-size:12px;color:#8795A8;margin-top:4px;margin-bottom:15px;">
-                Don't have a key? Get one 100% free in 30 seconds at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#3DB88A;text-decoration:none;font-weight:600;">Google AI Studio ↗</a> (No credit card required).
+                """<div style="font-size:12px;color:#5B6577;margin-top:4px;margin-bottom:15px;">
+                Don't have a key? Get one 100% free in 30 seconds at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#0E8F7E;text-decoration:none;font-weight:600;">Google AI Studio ↗</a> (No credit card required).
                 </div>""",
                 unsafe_allow_html=True
             )
@@ -1337,7 +1367,7 @@ with tab_single:
             ])
 
             with sub_ai_tab1:
-                st.markdown('<div style="font-size:13px;color:#8795A8;margin-bottom:12px;">Generates an authoritative, plain-language forensic briefing explaining the spectral rolloff, pitch micro-inflections, and vocoder artifacts.</div>', unsafe_allow_html=True)
+                st.markdown('<div style="font-size:13px;color:#5B6577;margin-bottom:12px;">Generates an authoritative, plain-language forensic briefing explaining the spectral rolloff, pitch micro-inflections, and vocoder artifacts.</div>', unsafe_allow_html=True)
                 col_lang, col_btn = st.columns([1, 2])
                 with col_lang:
                     lang_choice = st.selectbox("Briefing Language", ["English", "Hindi / Hinglish"], key="ai_lang_select")
@@ -1362,7 +1392,7 @@ with tab_single:
 
                 if "xai_report" in st.session_state and st.session_state["xai_report"]:
                     st.markdown(f"""
-                    <div style="background:#11201C;border:1px solid rgba(61,184,138,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#D8E0EA;line-height:1.6;">
+                    <div style="background:#E8F6F3;border:1px solid rgba(14,143,126,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#172033;line-height:1.6;">
                     {st.session_state['xai_report']}
                     </div>
                     """, unsafe_allow_html=True)
@@ -1375,7 +1405,7 @@ with tab_single:
                     )
 
             with sub_ai_tab2:
-                st.markdown('<div style="font-size:13px;color:#8795A8;margin-bottom:12px;">Transcribes spoken speech and performs semantic fraud detection (financial urgency, impersonation extortion, CEO fraud, family distress scams).</div>', unsafe_allow_html=True)
+                st.markdown('<div style="font-size:13px;color:#5B6577;margin-bottom:12px;">Transcribes spoken speech and performs semantic fraud detection (financial urgency, impersonation extortion, CEO fraud, family distress scams).</div>', unsafe_allow_html=True)
                 if st.button("🚨 Run Semantic Scam & Threat Assessment", key="btn_run_threat", type="primary"):
                     with st.spinner("Transcribing speech and screening for social engineering / scam vectors..."):
                         fname = st.session_state.get("analyzed_file_name", data.get("filename", "recording.wav"))
@@ -1392,7 +1422,7 @@ with tab_single:
 
                 if "threat_report" in st.session_state and st.session_state["threat_report"]:
                     st.markdown(f"""
-                    <div style="background:#231416;border:1px solid rgba(238,90,82,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#D8E0EA;line-height:1.6;">
+                    <div style="background:#FDECEF;border:1px solid rgba(217,54,84,0.3);border-radius:10px;padding:20px;margin-top:12px;color:#172033;line-height:1.6;">
                     {st.session_state['threat_report']}
                     </div>
                     """, unsafe_allow_html=True)
@@ -1405,23 +1435,23 @@ with tab_single:
                 user_msg_count = len([m for m in curr_chat if m.get("role") == "user"])
 
                 st.markdown(f"""
-                <div style="background:linear-gradient(135deg, #151B24 0%, #0E1218 100%);border:1px solid #2A3442;border-radius:10px;padding:20px 22px;margin-bottom:16px;">
+                <div style="background:linear-gradient(135deg, #FFFFFF 0%, #F6F8FB 100%);border:1px solid #DDE2EA;border-radius:10px;padding:20px 22px;margin-bottom:16px;">
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
                     <div>
                       <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-size:20px;">💬</span>
-                        <span style="font-family:'IBM Plex Sans Condensed',sans-serif;font-size:16px;font-weight:700;color:#D8E0EA;">Forensic AI Copilot — Dedicated Investigation Chatbox</span>
+                        <span style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:#172033;">Forensic AI Copilot — Dedicated Investigation Chatbox</span>
                       </div>
-                      <div style="color:#8795A8;font-size:13px;margin-top:6px;max-width:680px;line-height:1.45;">
+                      <div style="color:#5B6577;font-size:13px;margin-top:6px;max-width:680px;line-height:1.45;">
                         Interact directly with your audio sample in an isolated, high-resolution modal chatbox. Ask deep technical questions, isolate frame glitches, cross-examine synthetic artifacts, or generate official court FIR affidavits with cryptographic chain of custody.
                       </div>
                     </div>
                     <div style="text-align:right;">
-                      <span style="font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;color:#3DB88A;background:rgba(61,184,138,0.12);padding:4px 10px;border-radius:12px;border:1px solid rgba(61,184,138,0.25);">
+                      <span style="font-family:'Figtree',sans-serif;font-size:11.5px;color:#0E8F7E;background:rgba(14,143,126,0.12);padding:4px 10px;border-radius:12px;border:1px solid rgba(14,143,126,0.25);">
                         ● {user_msg_count} Questions Logged
                       </span>
-                      <div style="font-family:'IBM Plex Sans',sans-serif;font-size:10.5px;color:#8795A8;margin-top:4px;">
-                        File: <code style="color:#5AA9E6;">{fname}</code>
+                      <div style="font-family:'Figtree',sans-serif;font-size:10.5px;color:#5B6577;margin-top:4px;">
+                        File: <code style="color:#2F3FBF;">{fname}</code>
                       </div>
                     </div>
                   </div>
@@ -1453,7 +1483,7 @@ with tab_single:
                         st.rerun()
 
                 # 1-Click Quick Action shortcuts
-                st.markdown('<div style="font-size:12px;font-family:\'IBM Plex Sans\',sans-serif;color:#8795A8;margin:14px 0 6px 0;">One-click actions</div>', unsafe_allow_html=True)
+                st.markdown('<div style="font-size:12px;font-family:\'Figtree\',sans-serif;color:#5B6577;margin:14px 0 6px 0;">One-click actions</div>', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     if st.button("🔍 Explain Suspect Glitches", use_container_width=True, key="quick_open_q1"):
@@ -1493,11 +1523,11 @@ with tab_single:
                         for idx, msg in enumerate(curr_chat):
                             if msg["role"] == "user":
                                 with st.chat_message("user", avatar="🕵️"):
-                                    st.markdown('<b style="color:#5AA9E6;font-size:11.5px;font-family:\'IBM Plex Sans\',sans-serif;">Investigator</b>', unsafe_allow_html=True)
+                                    st.markdown('<b style="color:#2F3FBF;font-size:11.5px;font-family:\'Figtree\',sans-serif;">Investigator</b>', unsafe_allow_html=True)
                                     st.markdown(msg['content'])
                             else:
                                 with st.chat_message("assistant", avatar="🤖"):
-                                    st.markdown('<b style="color:#3DB88A;font-size:11.5px;font-family:\'IBM Plex Sans\',sans-serif;">Copilot</b>', unsafe_allow_html=True)
+                                    st.markdown('<b style="color:#0E8F7E;font-size:11.5px;font-family:\'Figtree\',sans-serif;">Copilot</b>', unsafe_allow_html=True)
                                     st.markdown(msg['content'])
 
                                 is_complaint = any(term in msg['content'].lower() for term in ["complaint", "affidavit", "information technology act", "cyber crime police", "station house officer", "police complaint"])
@@ -1599,17 +1629,17 @@ with tab_mic:
             total_dur = data.get("total_duration", 0.0)
             fake_ratio = data.get("fake_ratio", 0.0)
             verdict = data.get("verdict", "")
-            col_v = "#3DB88A" if ("Authentic Human" in verdict or fake_ratio == 0) else "#EE5A52" if ("Fully Synthetic" in verdict or fake_ratio >= 75) else "#E3A03A"
+            col_v = "#0E8F7E" if ("Authentic Human" in verdict or fake_ratio == 0) else "#D93654" if ("Fully Synthetic" in verdict or fake_ratio >= 75) else "#B86E00"
 
             mic_ai_pct = round(fake_ratio, 1)
             mic_human_pct = round(100.0 - mic_ai_pct, 1)
 
             st.markdown(f"""
-            <div style="background:#151B24;border:1px solid #2A3442;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;margin-bottom:14px;">
-              <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#8795A8;letter-spacing:0.04em;">Live mic verdict and full timeline</div>
+            <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-left:4px solid {col_v};padding:18px;border-radius:10px;margin-top:14px;margin-bottom:14px;">
+              <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#5B6577;letter-spacing:0.04em;">Live mic verdict and full timeline</div>
               <div style="font-size:22px;font-weight:700;color:{col_v};margin:4px 0;">{verdict}</div>
-              <div style="font-size:13px;color:#D8E0EA;margin-top:6px;">
-                Overall AI Content: <b style="color:{'#3DB88A' if mic_ai_pct == 0 else '#EE5A52'};font-size:15px;">{mic_ai_pct}% AI</b> {f'🛡️ (100% Pure Organic Voice)' if mic_ai_pct == 0 else f'({mic_human_pct}% Human)'} · Total Recorded: <b>{total_dur}s</b> · Analyzed Frames: <b>{len(segments)} Temporal Windows</b>
+              <div style="font-size:13px;color:#172033;margin-top:6px;">
+                Overall AI Content: <b style="color:{'#0E8F7E' if mic_ai_pct == 0 else '#D93654'};font-size:15px;">{mic_ai_pct}% AI</b> {f'🛡️ (100% Pure Organic Voice)' if mic_ai_pct == 0 else f'({mic_human_pct}% Human)'} · Total Recorded: <b>{total_dur}s</b> · Analyzed Frames: <b>{len(segments)} Temporal Windows</b>
               </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1621,16 +1651,16 @@ with tab_mic:
                 for idx, s in enumerate(segments):
                     with cols[idx % len(cols)]:
                         is_seg_fake = s["fake_probability"] >= 0.5
-                        seg_col = "#EE5A52" if is_seg_fake else "#3DB88A"
+                        seg_col = "#D93654" if is_seg_fake else "#0E8F7E"
                         st.markdown(f"""
-                        <div style="background:#1B2330;border:1px solid #2A3442;border-left:3px solid {seg_col};padding:8px 12px;border-radius:8px;margin-bottom:8px;">
-                          <div style="font-family:'IBM Plex Sans',sans-serif;font-size:10px;color:#8795A8;">
+                        <div style="background:#F6F8FB;border:1px solid #DDE2EA;border-left:3px solid {seg_col};padding:8px 12px;border-radius:8px;margin-bottom:8px;">
+                          <div style="font-family:'Figtree',sans-serif;font-size:10px;color:#5B6577;">
                             WINDOW #{idx+1} · {s.get('start', 0.0)}s – {s.get('end', 0.0)}s
                           </div>
                           <div style="font-weight:700;font-size:13px;color:{seg_col};margin-top:2px;">
                             {'AI Fake' if is_seg_fake else 'Human'} ({s.get('fake_probability', 0)*100:.1f}%)
                           </div>
-                          <div style="font-size:10.5px;color:#66758A;">Confidence: {s.get('confidence', 0)}%</div>
+                          <div style="font-size:10.5px;color:#8590A3;">Confidence: {s.get('confidence', 0)}%</div>
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1708,24 +1738,24 @@ with tab_speaker:
                     if sim_pct >= 82.0 and is_sus_ai:
                         alert_title = "🚨 HIGH-RISK VOICE CLONE DETECTED"
                         alert_desc = f"The suspect audio matches the vocal identity of the reference speaker ({sim_pct}% voiceprint match), but contains {sus_fake_ratio}% synthetic speech segments. High probability of AI voice cloning / impersonation attack."
-                        alert_color = "#EE5A52"
+                        alert_color = "#D93654"
                     elif sim_pct >= 82.0 and not is_sus_ai:
                         alert_title = "✓ AUTHENTIC SPEAKER MATCH"
                         alert_desc = f"The suspect audio matches the reference speaker ({sim_pct}% voiceprint match) and is classified as authentic human voice ({sus_fake_ratio}% AI ratio)."
-                        alert_color = "#3DB88A"
+                        alert_color = "#0E8F7E"
                     elif sim_pct < 65.0:
                         alert_title = "❌ DISTINCT SPEAKERS"
                         alert_desc = f"The vocal tracts and acoustic resonances do not match ({sim_pct}% similarity). The recordings represent two completely different speakers."
-                        alert_color = "#8795A8"
+                        alert_color = "#5B6577"
                     else:
                         alert_title = "⚠️ AMBIGUOUS / PARTIAL SIMILARITY"
                         alert_desc = f"Moderate acoustic overlap ({sim_pct}% match). Inconclusive identity match; check recording quality and background noise."
-                        alert_color = "#E3A03A"
+                        alert_color = "#B86E00"
 
                     st.markdown(f"""
-                    <div style="background:#151B24;border:1px solid #2A3442;border-left:5px solid {alert_color};padding:22px;border-radius:12px;margin:20px 0;">
-                      <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;color:{alert_color};font-weight:700;">{alert_title}</div>
-                      <div style="font-size:15px;color:#D8E0EA;margin-top:8px;line-height:1.6;">{alert_desc}</div>
+                    <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-left:5px solid {alert_color};padding:22px;border-radius:12px;margin:20px 0;">
+                      <div style="font-family:'Figtree',sans-serif;font-size:11.5px;color:{alert_color};font-weight:700;">{alert_title}</div>
+                      <div style="font-size:15px;color:#172033;margin-top:8px;line-height:1.6;">{alert_desc}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -1743,7 +1773,7 @@ with tab_speaker:
                         st.markdown(f"""
                         <div class="vcard">
                           <div class="k">Suspect Synthetic Ratio</div>
-                          <div class="v" style="color:{'#EE5A52' if sus_fake_ratio >= 50 else '#3DB88A'};">{sus_fake_ratio}%</div>
+                          <div class="v" style="color:{'#D93654' if sus_fake_ratio >= 50 else '#0E8F7E'};">{sus_fake_ratio}%</div>
                           <div class="sub">Verdict: {data_sus.get('verdict', 'N/A')}</div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -1775,9 +1805,9 @@ with tab_speaker:
                         c_spk_info, c_spk_btn = st.columns([3, 1])
                         with c_spk_info:
                             st.markdown(f"""
-                            <div style="background:#151B24;border:1px solid #2A3442;border-left:4px solid var(--cyan);padding:12px 16px;border-radius:8px;">
-                              <div style="font-family:'IBM Plex Sans',sans-serif;font-size:10.5px;color:#8795A8;letter-spacing:0.04em;">Full timeline</div>
-                              <div style="font-size:13.5px;color:#D8E0EA;margin-top:2px;">
+                            <div style="background:#FFFFFF;border:1px solid #DDE2EA;border-left:4px solid var(--cyan);padding:12px 16px;border-radius:8px;">
+                              <div style="font-family:'Figtree',sans-serif;font-size:10.5px;color:#5B6577;letter-spacing:0.04em;">Full timeline</div>
+                              <div style="font-size:13.5px;color:#172033;margin-top:2px;">
                                 Inspect <b>{sus_file.name}</b> in Single Localizer to view temporal speech frames, probability curves, and 3D spectrogram.
                               </div>
                             </div>
@@ -1963,25 +1993,25 @@ with tab_history:
         st.write(f"Showing **{len(filtered_scans)}** scan record{'s' if len(filtered_scans) > 1 else ''} · Timezone: **{user_tz_label}**:")
         for idx, h in enumerate(filtered_scans):
             v = h.get("verdict", "")
-            col_v = "#3DB88A" if "Authentic" in v or "Human" in v else "#EE5A52" if "Synthetic" in v or "Fake" in v else "#E3A03A"
+            col_v = "#0E8F7E" if "Authentic" in v or "Human" in v else "#D93654" if "Synthetic" in v or "Fake" in v else "#B86E00"
             utc_iso = h.get("created_at_utc", "")
             disp_time = format_local_timestamp(utc_iso, user_tz_obj, user_tz_name) if utc_iso else h.get("created_at", "")
             c_info, c_inspect, c_chat = st.columns([3.3, 0.9, 1.2])
             with c_info:
                 st.markdown(f"""
-                <div style="display:flex;justify-content:space-between;align-items:center;background:#151B24;border:1px solid #2A3442;border-radius:8px;padding:12px 16px;margin-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;background:#FFFFFF;border:1px solid #DDE2EA;border-radius:8px;padding:12px 16px;margin-bottom:6px;">
                   <div>
                     <div style="font-weight:600;font-size:13.5px;">{h.get('filename')}</div>
-                    <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#8795A8;margin-top:3px;">
+                    <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#5B6577;margin-top:3px;">
                       Duration: {h.get('duration_sec', 0):.1f}s · Scanned at <span class="client-local-time" data-utc="{utc_iso}">{disp_time}</span>
                     </div>
 
                   </div>
                   <div style="text-align:right;">
-                    <span style="font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;font-weight:600;color:{col_v};background:#1B2330;padding:4px 10px;border-radius:12px;">
+                    <span style="font-family:'Figtree',sans-serif;font-size:11.5px;font-weight:600;color:{col_v};background:#F6F8FB;padding:4px 10px;border-radius:12px;">
                       {v or 'Scanned'}
                     </span>
-                    <div style="font-family:'IBM Plex Sans',sans-serif;font-size:11px;color:#8795A8;margin-top:3px;">
+                    <div style="font-family:'Figtree',sans-serif;font-size:11px;color:#5B6577;margin-top:3px;">
                       Synthetic: {h.get('fake_ratio', 0):.1f}%
                     </div>
                   </div>
@@ -2037,7 +2067,7 @@ with tab_history:
         )
     else:
         st.markdown("""
-        <div style="background:#151B24;border:1px dashed #2A3442;border-radius:10px;padding:28px;text-align:center;color:#8795A8;font-size:13.5px;">
-          No matching forensic scans found. Upload and analyze an audio clip in the 'Analyze' tab to populate this audit log.
+        <div style="background:#FFFFFF;border:1px dashed #DDE2EA;border-radius:10px;padding:28px;text-align:center;color:#5B6577;font-size:13.5px;">
+          No matching forensic scans found. Upload and analyze an audio clip in the 'Analyze a file' tab to populate this audit log.
         </div>
         """, unsafe_allow_html=True)
