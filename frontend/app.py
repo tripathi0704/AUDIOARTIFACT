@@ -63,6 +63,7 @@ if "torchaudio" not in sys.modules:
 
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 import librosa
 
@@ -317,27 +318,296 @@ def format_local_timestamp(dt_or_str=None, tz_obj=None, tz_name="") -> str:
     return dt.strftime("%Y-%m-%d %I:%M:%S %p") + (f" {abbr}" if abbr else "")
 
 # ----------------------------------------------------------------------
-# GLOBAL DARK THEME STYLING
+# FORENSIC VISUALIZATION HELPERS (PROTOTYPE DESIGN SYSTEM)
+# ----------------------------------------------------------------------
+def build_holographic_gauge(fake_ratio: float, verdict: str) -> go.Figure:
+    """Builds a futuristic circular holographic confidence dial."""
+    ai_pct = round(float(fake_ratio), 1)
+    if ai_pct < 25:
+        bar_color = "#10B981"  # Emerald Green
+        verdict_badge = "AUTHENTIC HUMAN"
+    elif ai_pct < 65:
+        bar_color = "#F59E0B"  # Amber Alert
+        verdict_badge = "SUSPICIOUS / SPLICED"
+    else:
+        bar_color = "#FF4B72"  # Coral / Crimson
+        verdict_badge = "SYNTHETIC DEEPFAKE"
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=ai_pct,
+        number={
+            "suffix": "%",
+            "font": {"size": 40, "family": "Outfit, Space Grotesk, sans-serif", "color": bar_color}
+        },
+        title={
+            "text": f"<b>SYNTHETIC RISK</b><br><span style='font-size:10.5px;color:#94A3B8;letter-spacing:0.12em;font-family:JetBrains Mono;'>{verdict_badge}</span>",
+            "font": {"size": 13, "family": "Outfit, sans-serif", "color": "#F8FAFC"}
+        },
+        domain={"x": [0, 1], "y": [0, 1]},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#475569", "tickfont": {"size": 9, "color": "#64748B"}},
+            "bar": {"color": bar_color, "thickness": 0.28},
+            "bgcolor": "rgba(13, 18, 30, 0.6)",
+            "borderwidth": 1,
+            "bordercolor": "rgba(0, 245, 255, 0.18)",
+            "steps": [
+                {"range": [0, 25], "color": "rgba(16, 185, 129, 0.14)"},
+                {"range": [25, 65], "color": "rgba(245, 158, 11, 0.14)"},
+                {"range": [65, 100], "color": "rgba(255, 75, 114, 0.16)"}
+            ]
+        }
+    ))
+    fig.update_layout(
+        height=225,
+        margin=dict(l=15, r=15, t=35, b=15),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#F8FAFC")
+    )
+    return fig
+
+
+def build_anomaly_radar_chart(forensics: dict, fake_ratio: float) -> go.Figure:
+    """Builds an executive forensic acoustic radar chart comparing target audio vs human baseline."""
+    categories = [
+        "Spectral Rolloff",
+        "Pitch Inflection",
+        "ZCR Dynamics",
+        "Dynamic Range",
+        "Harmonic Energy"
+    ]
+
+    rolloff = forensics.get("spectral_rolloff_85_hz", 2400) if forensics else 2400
+    rolloff_score = min(100, max(15, int((rolloff / 4800.0) * 100)))
+
+    pitch_score = min(100, max(10, int(forensics.get("pitch_inflection_score", 45)))) if forensics else 45
+    zcr = forensics.get("zero_crossing_rate", 0.08) if forensics else 0.08
+    zcr_score = min(100, max(15, int(zcr * 500)))
+
+    dyn = forensics.get("dynamic_range_db", 35.0) if forensics else 35.0
+    dyn_score = min(100, max(15, int(100 - min(80, dyn * 1.8))))
+
+    harm_score = min(100, max(20, int(float(fake_ratio) * 0.85 + 15)))
+
+    suspect_values = [rolloff_score, pitch_score, zcr_score, dyn_score, harm_score]
+    human_baseline = [32, 75, 30, 35, 25]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=human_baseline + [human_baseline[0]],
+        theta=categories + [categories[0]],
+        fill="toself",
+        fillcolor="rgba(16, 185, 129, 0.08)",
+        line=dict(color="rgba(16, 185, 129, 0.6)", width=1.5, dash="dot"),
+        name="Human Baseline",
+        hoverinfo="skip"
+    ))
+
+    line_color = "#FF4B72" if fake_ratio >= 50 else "#00F5FF"
+    fill_color = "rgba(255, 75, 114, 0.22)" if fake_ratio >= 50 else "rgba(0, 245, 255, 0.18)"
+
+    fig.add_trace(go.Scatterpolar(
+        r=suspect_values + [suspect_values[0]],
+        theta=categories + [categories[0]],
+        fill="toself",
+        fillcolor=fill_color,
+        line=dict(color=line_color, width=2.5),
+        name="Analyzed Audio",
+        marker=dict(size=5, color=line_color)
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 100], showticklabels=False, linecolor="rgba(255,255,255,0.08)", gridcolor="rgba(255,255,255,0.07)"),
+            angularaxis=dict(tickfont=dict(size=9.5, family="Outfit, sans-serif", color="#94A3B8"), linecolor="rgba(255,255,255,0.08)", gridcolor="rgba(255,255,255,0.07)"),
+            bgcolor="rgba(13, 18, 30, 0.45)"
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.22,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10, family="JetBrains Mono", color="#94A3B8")
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=225,
+        margin=dict(l=25, r=25, t=15, b=25)
+    )
+    return fig
+
+
+def build_waveform_and_timeline_chart(segments: list, total_dur: float, spliced_regions: list, decoded_y, threshold_pct: float) -> go.Figure:
+    """Builds a synchronized dual-track timeline: Audio Waveform with Spliced Highlights + Deepfake Probability Curve."""
+    has_audio_track = decoded_y is not None and len(decoded_y) > 0
+
+    if has_audio_track:
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.09,
+            row_heights=[0.42, 0.58],
+            subplot_titles=("ACOUSTIC WAVEFORM & SPLICED ANOMALY REGIONS", "CONTINUOUS DEEPFAKE PROBABILITY TIMELINE")
+        )
+
+        y_arr = np.asarray(decoded_y, dtype=np.float32)
+        target_pts = 1200
+        step = max(1, len(y_arr) // target_pts)
+        y_down = y_arr[::step]
+        t_down = np.linspace(0, total_dur, len(y_down))
+
+        fig.add_trace(go.Scatter(
+            x=t_down,
+            y=y_down,
+            mode="lines",
+            line=dict(color="#00F5FF", width=1.15),
+            name="Audio Envelope",
+            hoverinfo="skip"
+        ), row=1, col=1)
+
+        for s_idx, r in enumerate(spliced_regions or []):
+            fig.add_vrect(
+                x0=r.get("start", 0),
+                x1=r.get("end", 0),
+                fillcolor="rgba(245, 158, 11, 0.28)",
+                line=dict(color="#F59E0B", width=1.5),
+                annotation_text="🎯 SPLICED AI",
+                annotation_position="top left",
+                annotation_font=dict(size=9.5, color="#F59E0B", family="JetBrains Mono"),
+                row=1, col=1
+            )
+    else:
+        fig = go.Figure()
+
+    time_points = [round((s["start"] + s["end"]) / 2, 2) for s in segments]
+    fake_probs = [round(s["fake_probability"] * 100, 2) for s in segments]
+    hover_texts = [
+        f"<b>Window #{s.get('segment', idx) + 1}</b><br>"
+        f"Timeline: <b>{s.get('start', 0)}s – {s.get('end', 0)}s</b><br>"
+        f"Synthetic Risk: <b>{s.get('fake_probability', 0)*100:.1f}%</b><br>"
+        f"Status: <b>{s.get('label', 'N/A')}</b> (Conf: {s.get('confidence', 0)}%)"
+        for idx, s in enumerate(segments)
+    ]
+
+    prob_trace = go.Scatter(
+        x=time_points,
+        y=fake_probs,
+        mode="lines+markers",
+        name="Deepfake Probability",
+        line=dict(color="#10B981", width=3, shape="spline"),
+        marker=dict(
+            size=7,
+            color=["#FF4B72" if p >= threshold_pct else "#10B981" for p in fake_probs],
+            line=dict(color="#07090E", width=1.5)
+        ),
+        hovertext=hover_texts,
+        hoverinfo="text"
+    )
+
+    thresh_trace = go.Scatter(
+        x=[0, total_dur],
+        y=[threshold_pct, threshold_pct],
+        mode="lines",
+        line=dict(color="rgba(245, 158, 11, 0.8)", width=1.5, dash="dash"),
+        name=f"Decision Boundary ({threshold_pct}%)",
+        hoverinfo="skip"
+    )
+
+    if has_audio_track:
+        fig.add_trace(thresh_trace, row=2, col=1)
+        fig.add_trace(prob_trace, row=2, col=1)
+        fig.add_shape(
+            type="rect",
+            x0=0, x1=total_dur,
+            y0=threshold_pct, y1=100,
+            fillcolor="rgba(255, 75, 114, 0.06)",
+            line=dict(width=0),
+            layer="below",
+            row=2, col=1
+        )
+    else:
+        fig.add_trace(thresh_trace)
+        fig.add_trace(prob_trace)
+        fig.add_shape(
+            type="rect",
+            x0=0, x1=total_dur,
+            y0=threshold_pct, y1=100,
+            fillcolor="rgba(255, 75, 114, 0.06)",
+            line=dict(width=0),
+            layer="below"
+        )
+
+    layout_args = dict(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#0D121E",
+        height=430 if has_audio_track else 320,
+        margin=dict(l=35, r=20, t=35 if has_audio_track else 15, b=35),
+        hovermode="closest",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.03,
+            xanchor="right",
+            x=1,
+            font=dict(family="JetBrains Mono", size=10, color="#94A3B8")
+        )
+    )
+
+    if has_audio_track:
+        fig.update_layout(**layout_args)
+        fig.update_xaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False, range=[0, total_dur], row=1, col=1)
+        fig.update_yaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False, row=1, col=1)
+        fig.update_xaxes(title=dict(text="Audio Timeline (Seconds)", font=dict(family="JetBrains Mono", size=11, color="#94A3B8")), gridcolor="rgba(255,255,255,0.06)", zeroline=False, range=[0, total_dur], row=2, col=1)
+        fig.update_yaxes(title=dict(text="Synthetic Risk (%)", font=dict(family="JetBrains Mono", size=11, color="#94A3B8")), gridcolor="rgba(255,255,255,0.06)", range=[-3, 105], zeroline=False, row=2, col=1)
+        for ann in fig["layout"]["annotations"]:
+            ann["font"] = dict(family="Outfit, sans-serif", size=11.5, color="#F8FAFC")
+    else:
+        fig.update_layout(
+            **layout_args,
+            xaxis=dict(
+                title=dict(text="Audio Timeline (Seconds)", font=dict(family="JetBrains Mono", size=11, color="#94A3B8")),
+                gridcolor="rgba(255,255,255,0.06)",
+                zeroline=False,
+                range=[0, total_dur]
+            ),
+            yaxis=dict(
+                title=dict(text="Synthetic Risk (%)", font=dict(family="JetBrains Mono", size=11, color="#94A3B8")),
+                gridcolor="rgba(255,255,255,0.06)",
+                range=[-3, 105],
+                zeroline=False
+            )
+        )
+    return fig
+
+
+# ----------------------------------------------------------------------
+# GLOBAL CYBER-FORENSIC GLASSMORPHISM STYLING
 # ----------------------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-:root{
-  --bg: #0A0C0B;
-  --panel: #131614;
-  --panel-2: #1A1E1B;
-  --line: #262B27;
-  --text: #ECEFEB;
-  --muted: #8C958E;
-  --muted-dim: #5E6660;
-  --real: #3ECF8E;
-  --real-dim: rgba(62,207,142,0.12);
-  --fake: #FF5C5C;
-  --fake-dim: rgba(255,92,92,0.14);
-  --amber: #FFB454;
-  --amber-dim: rgba(255,180,84,0.14);
-  --cyan: #5EEAD4;
+:root {
+  --bg: #07090E;
+  --panel: rgba(13, 18, 30, 0.72);
+  --panel-solid: #0D121E;
+  --panel-hover: rgba(18, 25, 42, 0.85);
+  --line: rgba(0, 245, 255, 0.14);
+  --line-subtle: rgba(255, 255, 255, 0.08);
+  --text: #F8FAFC;
+  --muted: #94A3B8;
+  --muted-dim: #64748B;
+  --cyan: #00F5FF;
+  --cyan-glow: rgba(0, 245, 255, 0.35);
+  --emerald: #10B981;
+  --emerald-dim: rgba(16, 185, 129, 0.12);
+  --coral: #FF4B72;
+  --coral-dim: rgba(255, 75, 114, 0.14);
+  --amber: #F59E0B;
+  --amber-dim: rgba(245, 158, 11, 0.14);
+  --violet: #8B5CF6;
 }
 
 #MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {
@@ -346,171 +616,193 @@ st.markdown("""
 }
 
 .stApp {
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(0, 245, 255, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.04) 0%, transparent 40%),
+    radial-gradient(circle at 15% 70%, rgba(16, 185, 129, 0.04) 0%, transparent 40%);
+  background-attachment: fixed;
 }
 
 .block-container {
-  padding-top: 1.8rem;
-  padding-bottom: 3rem;
-  max-width: 1140px;
+  padding-top: 1.6rem;
+  padding-bottom: 3.5rem;
+  max-width: 1260px;
 }
 
 html, body, [class*="css"] {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Outfit', sans-serif;
   color: var(--text);
 }
 
 .mono {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
 }
 
-/* Brand Navigation Header */
+/* Mission Command Navigation Bar */
 .brand-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  margin-bottom: 22px;
+  padding: 12px 18px;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
 .brand {
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 700;
-  font-size: 17px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 800;
+  font-size: 19px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  letter-spacing: 0.02em;
+  gap: 12px;
+  letter-spacing: -0.01em;
+  color: #FFFFFF;
 }
 
-.brand .px {
-  width: 9px;
-  height: 9px;
-  background: var(--real);
+.brand-orb {
+  width: 11px;
+  height: 11px;
+  background: var(--cyan);
   border-radius: 50%;
-  box-shadow: 0 0 10px var(--real);
-  animation: pulse 2.2s infinite;
+  box-shadow: 0 0 14px var(--cyan);
+  animation: pulse-glow 2.4s infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.88); }
 }
 
 .status-badge {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: rgba(13, 18, 30, 0.85);
+  border: 1px solid var(--line-subtle);
   padding: 5px 12px;
   border-radius: 20px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
-.status-badge i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--real);
-  box-shadow: 0 0 6px var(--real);
+.hero-banner {
+  margin-bottom: 24px;
 }
 
 .hero-title {
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  font-size: clamp(28px, 3.8vw, 42px);
-  line-height: 1.15;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  font-size: clamp(30px, 4.2vw, 46px);
+  line-height: 1.12;
   margin-bottom: 6px;
+  color: #FFFFFF;
 }
 
-.hero-title span.fake { color: var(--fake); }
-.hero-title span.real { color: var(--real); }
+.hero-title span.cyan {
+  color: var(--cyan);
+  text-shadow: 0 0 24px rgba(0, 245, 255, 0.35);
+}
+
+.hero-title span.coral {
+  color: var(--coral);
+  text-shadow: 0 0 24px rgba(255, 75, 114, 0.35);
+}
 
 .hero-sub {
   color: var(--muted);
   font-size: 14.5px;
-  max-width: 720px;
-  margin-bottom: 22px;
+  max-width: 820px;
   line-height: 1.6;
 }
 
 /* Tabs Restyling */
 .stTabs [data-baseweb="tab-list"] {
   gap: 8px;
-  background-color: var(--panel);
+  background: var(--panel);
+  backdrop-filter: blur(14px);
   padding: 6px 10px;
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid var(--line);
   margin-bottom: 24px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .stTabs [data-baseweb="tab"] {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Outfit', sans-serif;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--muted);
-  border-radius: 8px;
-  padding: 8px 16px;
+  border-radius: 10px;
+  padding: 8px 18px;
   border: none !important;
   background-color: transparent !important;
+  transition: all 0.2s ease;
 }
 
 .stTabs [aria-selected="true"] {
-  background-color: var(--panel-2) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--line) !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  background: rgba(0, 245, 255, 0.12) !important;
+  color: var(--cyan) !important;
+  border: 1px solid rgba(0, 245, 255, 0.35) !important;
+  box-shadow: 0 4px 16px rgba(0, 245, 255, 0.15);
 }
 
 /* File Uploader Restyle */
 [data-testid="stFileUploader"] {
   background: var(--panel);
-  border: 1.5px dashed var(--line);
-  border-radius: 14px;
-  padding: 10px 14px;
-  transition: border-color 0.25s ease;
+  backdrop-filter: blur(14px);
+  border: 1.5px dashed rgba(0, 245, 255, 0.25);
+  border-radius: 16px;
+  padding: 12px 16px;
+  transition: all 0.25s ease;
 }
 
 [data-testid="stFileUploader"]:hover {
-  border-color: var(--real);
-}
-
-[data-testid="stFileUploader"] section {
-  background: transparent;
-  border: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.15);
 }
 
 /* Buttons */
 div.stButton > button {
-  background: var(--text);
-  color: #0A0C0B;
+  background: linear-gradient(135deg, #00F5FF 0%, #00C4D4 100%);
+  color: #07090E;
   border: none;
   font-weight: 700;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 14px;
   padding: 10px 24px;
-  border-radius: 22px;
-  transition: transform 0.15s ease, background 0.15s ease;
+  border-radius: 24px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 16px rgba(0, 245, 255, 0.25);
 }
 
 div.stButton > button:hover {
-  transform: translateY(-1px);
-  background: #ffffff;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 245, 255, 0.4);
+}
+
+/* Audio Player */
+audio {
+  filter: invert(0.92) hue-rotate(180deg) brightness(1.1);
+  border-radius: 30px;
+  width: 100%;
 }
 
 /* Section Labels */
 .section-label {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11.5px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--amber);
-  margin: 28px 0 12px;
+  color: var(--cyan);
+  margin: 30px 0 14px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -518,40 +810,49 @@ div.stButton > button:hover {
 
 .section-label::before {
   content: '';
-  width: 18px;
-  height: 1px;
-  background: var(--amber);
+  width: 20px;
+  height: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
 }
 
-/* Verdict Cards */
+/* Cyber Cards */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 22px;
 }
 
 .vcard {
   background: var(--panel);
+  backdrop-filter: blur(14px);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 18px 20px;
-  transition: border-color 0.2s;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.vcard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 245, 255, 0.35);
+  box-shadow: 0 12px 36px rgba(0, 245, 255, 0.1);
 }
 
 .vcard .k {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
   color: var(--muted-dim);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   margin-bottom: 6px;
 }
 
 .vcard .v {
-  font-size: 24px;
-  font-weight: 700;
-  font-family: 'Space Grotesk', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  font-family: 'Outfit', sans-serif;
 }
 
 .vcard .sub {
@@ -564,78 +865,91 @@ div.stButton > button:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 14px;
+  padding: 7px 16px;
   border-radius: 20px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .pill-status.real {
-  background: var(--real-dim);
-  border: 1px solid rgba(62,207,142,0.35);
-  color: var(--real);
+  background: var(--emerald-dim);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--emerald);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
 }
 
 .pill-status.fake {
-  background: var(--fake-dim);
-  border: 1px solid rgba(255,92,92,0.35);
-  color: var(--fake);
+  background: var(--coral-dim);
+  border: 1px solid rgba(255, 75, 114, 0.4);
+  color: var(--coral);
+  box-shadow: 0 0 16px rgba(255, 75, 114, 0.15);
 }
 
 .pill-status.mixed {
   background: var(--amber-dim);
-  border: 1px solid rgba(255,180,84,0.35);
+  border: 1px solid rgba(245, 158, 11, 0.4);
   color: var(--amber);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.15);
 }
 
-/* Cryptographic & Artifact Strip */
 .crypto-strip {
-  background: var(--panel-2);
+  background: var(--panel);
+  backdrop-filter: blur(14px);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 16px;
+  border-radius: 12px;
+  padding: 14px 18px;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 20px;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11.5px;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# BRAND HEADER
+# BRAND MISSION COMMAND HEADER
 # ----------------------------------------------------------------------
 user_tz_obj, user_tz_name, user_tz_label, is_auto_tz = resolve_client_timezone()
 now_local = datetime.now(timezone.utc).astimezone(user_tz_obj)
 initial_clock_str = now_local.strftime("%I:%M:%S %p")
+backend_online = is_local_backend_active(8000)
 
 st.markdown(f"""
 <div class="brand-nav">
-  <div class="brand"><span class="px"></span>AudioArtifact</div>
-  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    <div class="status-badge" style="color:var(--cyan);border-color:rgba(94,234,212,0.3);">
-      <i></i>SESSION #{st.session_state['session_token']}
+  <div class="brand">
+    <span class="brand-orb"></span>
+    <span>Audio<span style="color:var(--cyan);">Artifact</span> <span style="font-size:12px;color:var(--muted);font-weight:500;margin-left:4px;">FORENSIC LAB</span></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div class="status-badge" style="color:var(--cyan);border-color:rgba(0,245,255,0.35);">
+      ◈ SESSION #{st.session_state['session_token']}
     </div>
-    <div class="status-badge" style="color:#ECEFEB;border-color:rgba(62,207,142,0.4);">
-      <span style="color:var(--real);">🕒</span>
-      <span style="font-weight:600;">{initial_clock_str}</span>
+    <div class="status-badge" style="color:#FFFFFF;border-color:rgba(0,245,255,0.25);">
+      <span style="color:var(--cyan);">🕒</span>
+      <span style="font-weight:700;">{initial_clock_str}</span>
       <span style="color:var(--muted);font-size:10.5px;margin-left:4px;">· {user_tz_label}</span>
     </div>
-    <div class="status-badge">Neural Acoustic Engine · Continuous Temporal Localization</div>
+    <div class="status-badge" style="color:{'#10B981' if backend_online else '#00F5FF'};border-color:{'rgba(16,185,129,0.35)' if backend_online else 'rgba(0,245,255,0.35)'};">
+      <span style="color:{'#10B981' if backend_online else '#00F5FF'};">●</span>
+      <span>{'FASTAPI BACKEND ACTIVE' if backend_online else 'NEURAL IN-MEMORY PIPELINE'}</span>
+    </div>
   </div>
 </div>
-<h1 class="hero-title">Audio<span class="real">Artifact</span> — Forensic <span class="fake">Deepfake</span> Audio Suite</h1>
-<p class="hero-sub">
-  Enterprise-grade audio forensic intelligence: continuous temporal localization,
-  acoustic bio-marker verification, speaker voiceprint cross-matching,
-  and cryptographic audit certification.
-</p>
+<div class="hero-banner">
+  <h1 class="hero-title">Audio<span class="cyan">Artifact</span> — Forensic <span class="coral">Deepfake</span> Intelligence</h1>
+  <p class="hero-sub">
+    Next-generation neural acoustic forensics: continuous temporal localization, acoustic bio-marker verification,
+    voiceprint clone cross-matching, and court-ready cryptographic audit certification.
+  </p>
+</div>
 """, unsafe_allow_html=True)
+
 
 
 # ----------------------------------------------------------------------
@@ -1050,96 +1364,130 @@ with tab_single:
                         del st.session_state["analyzed_audio_bytes"]
                     st.rerun()
 
-        # Verdict Pill Style
-        if "Authentic Human" in verdict or fake_ratio == 0:
-            pill_class = "real"
-            pill_text = f"✓ {verdict}"
-        elif "Fully Synthetic" in verdict or fake_ratio >= 75:
-            pill_class = "fake"
-            pill_text = f"⚠ {verdict}"
-        else:
-            pill_class = "mixed"
-            pill_text = f"⚡ {verdict}"
+        # Pre-decode audio if audio bytes available for instant slicing and waveform display
+        decoded_y = None
+        if audio_bytes:
+            try:
+                decoded_y, _, _ = decode_audio_bytes(audio_bytes)
+            except Exception:
+                decoded_y = None
 
-        st.markdown('<div class="section-label">Forensic Summary & Cryptographic Proof</div>', unsafe_allow_html=True)
-
-        # Top Status & Metrics Grid
+        # Verdict Pill Style & Colors
         ai_pct = round(fake_ratio, 1)
         human_pct = round(100.0 - ai_pct, 1)
 
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown(f"""
-            <div class="vcard">
-              <div class="k">Overall Verdict</div>
-              <div style="margin-top:6px;"><span class="pill-status {pill_class}">{pill_text}</span></div>
-              <div class="sub">Target: {data.get("filename", "")}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"""
-            <div class="vcard">
-              <div class="k">Overall AI Voice Content</div>
-              <div class="v" style="color:{'#3ECF8E' if ai_pct == 0 else '#FF5C5C' if ai_pct > 30 else '#FFB454'}">{f'{ai_pct}% AI' if ai_pct > 0 else '0.0% AI'}</div>
-              <div class="sub">{'🛡️ 100.0% Genuine Human (0% AI)' if ai_pct == 0 else f'{ai_pct}% AI · {human_pct}% Human Voice'}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c3:
-            peak_prob = round(highest.get("fake_probability", 0.0) * 100, 1)
-            st.markdown(f"""
-            <div class="vcard">
-              <div class="k">Peak Risk Segment</div>
-              <div class="v" style="color:{'#FF5C5C' if peak_prob >= 50 else '#3ECF8E'}">{peak_prob}% AI</div>
-              <div class="sub">Interval: {highest.get('start', 0)}s – {highest.get('end', 0)}s</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c4:
-            st.markdown(f"""
-            <div class="vcard">
-              <div class="k">Model Confidence</div>
-              <div class="v" style="color:var(--cyan);">{avg_conf}%</div>
-              <div class="sub">{len(segments)} temporal speech frames</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Overall Voice Composition Bar (Visual Human vs AI Split)
-        st.markdown(f"""
-        <div style="background:#131614;border:1px solid #262B27;border-radius:10px;padding:12px 18px;margin-bottom:18px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
-            <span><span style="color:#3ECF8E;font-weight:700;">● ORGANIC HUMAN VOICE:</span> <b>{human_pct}%</b></span>
-            <span><span style="color:{'#3ECF8E' if ai_pct == 0 else '#FF5C5C'};font-weight:700;">● SYNTHETIC AI VOICE:</span> <b>{ai_pct}%</b></span>
-          </div>
-          <div style="width:100%;height:8px;background:#262B27;border-radius:4px;overflow:hidden;display:flex;">
-            <div style="width:{human_pct}%;height:100%;background:#3ECF8E;transition:width 0.4s;"></div>
-            <div style="width:{ai_pct}%;height:100%;background:#FF5C5C;transition:width 0.4s;"></div>
-          </div>
-          <div style="margin-top:6px;font-size:11px;color:#8C958E;font-family:'IBM Plex Mono',monospace;display:flex;justify-content:space-between;flex-wrap:gap:6px;">
-            <span>{'✓ 100% Organic Human Voice — Zero AI synthetic artifacts detected (0.0% AI)' if ai_pct == 0 else f'⚠ {ai_pct}% of total speech matches synthetic voice patterns ({data.get("fake_seconds", 0)}s of {total_dur}s)'}</span>
-            <span>Analyzed Timeline: {total_dur}s</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        if "Authentic Human" in verdict or fake_ratio == 0:
+            pill_class = "real"
+            pill_text = f"✓ {verdict}"
+            accent_color = "#10B981"
+        elif "Fully Synthetic" in verdict or fake_ratio >= 75:
+            pill_class = "fake"
+            pill_text = f"⚠ {verdict}"
+            accent_color = "#FF4B72"
+        else:
+            pill_class = "mixed"
+            pill_text = f"⚡ {verdict}"
+            accent_color = "#F59E0B"
 
         spliced_regions_list = data.get("spliced_regions", [])
-        if spliced_regions_list:
-            spliced_intervals_str = ", ".join([f"<b>{r.get('start', 0)}s – {r.get('end', 0)}s</b> ({r.get('duration', 0)}s, peak {r.get('max_prob', 0)*100:.1f}% AI)" for r in spliced_regions_list])
+        threshold_pct = threshold_val if "threshold_val" in locals() else 50
+
+        st.markdown('<div class="section-label">◈ Forensic Biometric Triad & Executive Case Record</div>', unsafe_allow_html=True)
+
+        # 3-Column Executive Triad (Holographic Dial | Case Record & Spliced Regions | Acoustic Radar Fingerprint)
+        col_gauge, col_meta, col_radar = st.columns([1.1, 1.6, 1.3])
+
+        with col_gauge:
+            st.markdown("""
+            <div style="background:var(--panel);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:14px;padding:12px 16px;text-align:center;box-shadow:0 8px 28px rgba(0,0,0,0.4);">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted-dim);letter-spacing:0.12em;text-transform:uppercase;">SYNTHETIC RISK GAUGE</div>
+            </div>
+            """, unsafe_allow_html=True)
+            gauge_fig = build_holographic_gauge(fake_ratio, verdict)
+            st.plotly_chart(gauge_fig, use_container_width=True, config={"displayModeBar": False})
             st.markdown(f"""
-            <div style="background:#1B1510;border:1px solid rgba(255,180,84,0.3);border-left:4px solid #FFB454;border-radius:8px;padding:10px 16px;margin-bottom:16px;">
-              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#FFB454;font-weight:700;">🎯 SPLICED AI INSERTIONS LOCALIZED ({len(spliced_regions_list)} region{'s' if len(spliced_regions_list) > 1 else ''}):</div>
-              <div style="font-size:12.5px;color:#ECEFEB;margin-top:3px;line-height:1.5;">
-                {spliced_intervals_str}
+            <div style="text-align:center;margin-top:-22px;margin-bottom:10px;">
+              <span class="pill-status {pill_class}">{pill_text}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_meta:
+            peak_prob = round(highest.get("fake_probability", 0.0) * 100, 1) if highest else 0.0
+            st.markdown(f"""
+            <div style="background:var(--panel);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:14px;padding:16px 20px;height:100%;box-shadow:0 8px 28px rgba(0,0,0,0.4);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--cyan);letter-spacing:0.1em;text-transform:uppercase;">CASE RECORD METRIC</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);background:rgba(0,245,255,0.08);padding:3px 8px;border-radius:6px;border:1px solid rgba(0,245,255,0.2);">
+                  CONFIDENCE: {avg_conf}%
+                </div>
+              </div>
+              <div style="font-size:16px;font-weight:800;color:#FFFFFF;margin-bottom:8px;font-family:'Outfit',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                📁 {data.get("filename", "Audio Recording")}
+              </div>
+              
+              <!-- Voice Composition Split Bar -->
+              <div style="margin-top:12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:5px;">
+                  <span><span style="color:#10B981;font-weight:700;">● ORGANIC:</span> {human_pct}%</span>
+                  <span><span style="color:{accent_color};font-weight:700;">● SYNTHETIC:</span> {ai_pct}%</span>
+                </div>
+                <div style="width:100%;height:8px;background:rgba(255,255,255,0.08);border-radius:6px;overflow:hidden;display:flex;">
+                  <div style="width:{human_pct}%;height:100%;background:#10B981;transition:width 0.4s;"></div>
+                  <div style="width:{ai_pct}%;height:100%;background:{accent_color};transition:width 0.4s;"></div>
+                </div>
+              </div>
+
+              <!-- Quick Anomaly Telemetry Chips -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;">
+                <div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 10px;">
+                  <div style="font-size:9.5px;color:var(--muted-dim);font-family:'JetBrains Mono';">PEAK RISK INTERVAL</div>
+                  <div style="font-size:13.5px;font-weight:700;color:{'#FF4B72' if peak_prob >= 50 else '#10B981'};margin-top:2px;">
+                    {peak_prob}% AI ({highest.get('start', 0)}s–{highest.get('end', 0)}s)
+                  </div>
+                </div>
+                <div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 10px;">
+                  <div style="font-size:9.5px;color:var(--muted-dim);font-family:'JetBrains Mono';">TEMPORAL FRAMES</div>
+                  <div style="font-size:13.5px;font-weight:700;color:var(--cyan);margin-top:2px;">
+                    {len(segments)} windows ({total_dur}s)
+                  </div>
+                </div>
+              </div>
+
+              <!-- Spliced Regions Badge -->
+              <div style="margin-top:12px;">
+                {'<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);border-radius:8px;padding:6px 12px;font-size:11.5px;color:#F59E0B;font-family:\'JetBrains Mono\';">⚠️ SPLICED AI AUDIO DETECTED: ' + str(len(spliced_regions_list)) + ' region(s)</div>' if spliced_regions_list else '<div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:6px 12px;font-size:11.5px;color:#10B981;font-family:\'JetBrains Mono\';">✓ UNIFIED ACOUSTIC CONTINUITY (No Splicing Detected)</div>'}
               </div>
             </div>
             """, unsafe_allow_html=True)
 
+        with col_radar:
+            st.markdown("""
+            <div style="background:var(--panel);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:14px;padding:12px 16px;text-align:center;box-shadow:0 8px 28px rgba(0,0,0,0.4);">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted-dim);letter-spacing:0.12em;text-transform:uppercase;">ACOUSTIC ANOMALY RADAR</div>
+            </div>
+            """, unsafe_allow_html=True)
+            radar_fig = build_anomaly_radar_chart(forensics, fake_ratio)
+            st.plotly_chart(radar_fig, use_container_width=True, config={"displayModeBar": False})
+
+        # Detailed Spliced Insertions Callout if present
+        if spliced_regions_list:
+            spliced_intervals_str = ", ".join([f"<b>{r.get('start', 0)}s – {r.get('end', 0)}s</b> ({r.get('duration', 0)}s, peak {r.get('max_prob', 0)*100:.1f}% AI)" for r in spliced_regions_list])
+            st.markdown(f"""
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);border-left:4px solid #F59E0B;border-radius:10px;padding:12px 18px;margin-bottom:18px;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#F59E0B;font-weight:700;">🎯 SPLICED AI SPEECH INSERTIONS LOCALIZED ({len(spliced_regions_list)} region{'s' if len(spliced_regions_list) > 1 else ''}):</div>
+              <div style="font-size:12.5px;color:#F8FAFC;margin-top:4px;line-height:1.6;">
+                {spliced_intervals_str}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Cryptographic Signatures & Download Action
         col_crypto, col_dl = st.columns([3, 1])
         with col_crypto:
             st.markdown(f"""
             <div class="crypto-strip">
-              <div><b>SHA-256:</b> <span style="color:var(--cyan);">{hashes.get('sha256', 'N/A')}</span></div>
-              <div style="color:var(--muted);"><b>Size:</b> {hashes.get('size_kb', 0)} KB · <b>Sampling:</b> 16,000 Hz Standardized</div>
+              <div><b>SHA-256 HASH:</b> <span style="color:var(--cyan);">{hashes.get('sha256', 'N/A')}</span></div>
+              <div style="color:var(--muted);"><b>File Size:</b> {hashes.get('size_kb', 0)} KB · <b>Acoustic Standard:</b> 16,000 Hz 16-bit Standardized</div>
             </div>
             """, unsafe_allow_html=True)
         with col_dl:
@@ -1153,15 +1501,15 @@ with tab_single:
                 help="Download an ISO-compliant, self-contained printable HTML/PDF forensic audit certificate."
             )
 
-        # Biological & Acoustic Artifact Findings
+        # Biological & Acoustic Artifact Findings (Glassmorphic Cards)
         if forensics:
-            st.markdown('<div class="section-label">Biological & Acoustic Artifact Findings</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-label">◈ Biological & Acoustic Artifact Telemetry</div>', unsafe_allow_html=True)
             a1, a2, a3, a4 = st.columns(4)
             with a1:
                 st.markdown(f"""
                 <div class="vcard">
                   <div class="k">Spectral Rolloff (85%)</div>
-                  <div class="v">{forensics.get('spectral_rolloff_85_hz', 0)} Hz</div>
+                  <div class="v" style="color:var(--cyan);">{forensics.get('spectral_rolloff_85_hz', 0)} <span style="font-size:13px;font-weight:500;">Hz</span></div>
                   <div class="sub">Centroid: {forensics.get('spectral_centroid_hz', 0)} Hz</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1169,7 +1517,7 @@ with tab_single:
                 st.markdown(f"""
                 <div class="vcard">
                   <div class="k">Zero-Crossing Rate (ZCR)</div>
-                  <div class="v">{forensics.get('zero_crossing_rate', 0)}</div>
+                  <div class="v" style="color:#10B981;">{forensics.get('zero_crossing_rate', 0)}</div>
                   <div class="sub">Silence / Noise Boundary</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1177,7 +1525,7 @@ with tab_single:
                 st.markdown(f"""
                 <div class="vcard">
                   <div class="k">Dynamic Range</div>
-                  <div class="v">{forensics.get('dynamic_range_db', 0)} dB</div>
+                  <div class="v" style="color:#F8FAFC;">{forensics.get('dynamic_range_db', 0)} <span style="font-size:13px;font-weight:500;">dB</span></div>
                   <div class="sub">Crest Factor: {forensics.get('crest_factor', 0)}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1190,89 +1538,16 @@ with tab_single:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Continuous Probability Timeline (Plotly)
-        st.markdown('<div class="section-label">Continuous Deepfake Probability Curve (Timeline)</div>', unsafe_allow_html=True)
-
-        time_points = [round((s["start"] + s["end"]) / 2, 2) for s in segments]
-        fake_probs = [round(s["fake_probability"] * 100, 2) for s in segments]
-        hover_texts = [
-            f"<b>Window {s.get('segment', idx) + 1}</b><br>"
-            f"Interval: {s.get('start', 0)}s – {s.get('end', 0)}s<br>"
-            f"AI Probability: {s.get('fake_probability', 0)*100:.1f}%<br>"
-            f"Classification: <b>{s.get('label', 'N/A')}</b> (Confidence: {s.get('confidence', 0)}%)"
-            for idx, s in enumerate(segments)
-        ]
-
-        fig = go.Figure()
-        threshold_pct = threshold_val if "threshold_val" in locals() else 50
-
-        # Shaded AI Region above threshold
-        fig.add_shape(
-            type="rect",
-            x0=0, x1=total_dur,
-            y0=threshold_pct, y1=100,
-            fillcolor="rgba(255, 92, 92, 0.05)",
-            line=dict(width=0),
-            layer="below"
+        # Multi-Track Acoustic Waveform & Continuous Anomaly Timeline
+        st.markdown('<div class="section-label">◈ Multi-Track Acoustic Waveform & Anomaly Timeline</div>', unsafe_allow_html=True)
+        multi_fig = build_waveform_and_timeline_chart(
+            segments=segments,
+            total_dur=total_dur,
+            spliced_regions=spliced_regions_list,
+            decoded_y=decoded_y,
+            threshold_pct=threshold_pct
         )
-
-        # Threshold Line
-        fig.add_trace(go.Scatter(
-            x=[0, total_dur],
-            y=[threshold_pct, threshold_pct],
-            mode="lines",
-            line=dict(color="rgba(255, 180, 84, 0.7)", width=1.5, dash="dash"),
-            name=f"Decision Boundary ({threshold_pct}%)",
-            hoverinfo="skip"
-        ))
-
-        # Continuous Probability Curve
-        fig.add_trace(go.Scatter(
-            x=time_points,
-            y=fake_probs,
-            mode="lines+markers",
-            name="Deepfake Probability",
-            line=dict(color="#3ECF8E", width=3, shape="spline"),
-            marker=dict(
-                size=7,
-                color=["#FF5C5C" if p >= threshold_pct else "#3ECF8E" for p in fake_probs],
-                line=dict(color="#0A0C0B", width=1.5)
-            ),
-            hovertext=hover_texts,
-            hoverinfo="text"
-        ))
-
-        fig.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#131614",
-            height=320,
-            margin=dict(l=40, r=20, t=20, b=40),
-            xaxis=dict(
-                title=dict(text="Timeline (Seconds)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
-                tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
-                gridcolor="#262B27",
-                zeroline=False,
-                range=[0, total_dur]
-            ),
-            yaxis=dict(
-                title=dict(text="AI Voice Probability (%)", font=dict(family="IBM Plex Mono", size=11, color="#8C958E")),
-                tickfont=dict(family="IBM Plex Mono", size=10, color="#5E6660"),
-                gridcolor="#262B27",
-                range=[-2, 105],
-                zeroline=False
-            ),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-                font=dict(family="IBM Plex Mono", size=11, color="#8C958E")
-            ),
-            hovermode="closest"
-        )
-
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(multi_fig, use_container_width=True, config={"displayModeBar": False})
 
         # Segment-by-Segment Forensic Explorer with Click-to-Play Audio Slicer
         st.markdown('<div class="section-label">Temporal Speech Frame Breakdown & Instant Audio Slicer</div>', unsafe_allow_html=True)
@@ -1313,7 +1588,7 @@ with tab_single:
                             pass
 
         # 3D Voice Signature Spectrogram
-        st.markdown('<div class="section-label">Voice Signature Spectrogram (3D Topography)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">◈ 3D Voice Signature Spectrogram (Acoustic Topography)</div>', unsafe_allow_html=True)
         spec_data = data.get("spectrogram", {})
         if "z" in spec_data and spec_data["z"]:
             z = np.array(spec_data["z"])
@@ -1323,18 +1598,19 @@ with tab_single:
             fig3d = go.Figure(data=[go.Surface(
                 z=z, x=x, y=y_axis,
                 colorscale=[
-                    [0, "#0A0C0B"],
-                    [0.35, "#132E22"],
-                    [0.7, "#1F6B4C"],
-                    [1.0, "#3ECF8E"]
+                    [0, "#07090E"],
+                    [0.25, "#0D1E36"],
+                    [0.55, "#0E486D"],
+                    [0.8, "#00C4D4"],
+                    [1.0, "#00F5FF"]
                 ],
                 showscale=False
             )])
             fig3d.update_layout(
                 scene=dict(
-                    xaxis=dict(title="", showbackground=False, color="#5E6660"),
-                    yaxis=dict(title="", showbackground=False, color="#5E6660"),
-                    zaxis=dict(title="", showbackground=False, color="#5E6660"),
+                    xaxis=dict(title="", showbackground=False, color="#64748B"),
+                    yaxis=dict(title="", showbackground=False, color="#64748B"),
+                    zaxis=dict(title="", showbackground=False, color="#64748B"),
                     bgcolor="rgba(0,0,0,0)",
                 ),
                 paper_bgcolor="rgba(0,0,0,0)",
